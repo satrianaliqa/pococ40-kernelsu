@@ -1570,6 +1570,31 @@ index 88e42c2e8..4f4db1f90 100644
  	if (mode & ~S_IRWXO)	/* where's F_OK, X_OK, W_OK, R_OK? */
  		return -EINVAL;
  
+diff --git a/fs/read_write.c b/fs/read_write.c
+index 93d06b4c5..32cb2b60a 100644
+--- a/fs/read_write.c
++++ b/fs/read_write.c
+@@ -573,11 +573,20 @@ static inline loff_t *file_ppos(struct file *file)
+ 	return file->f_mode & FMODE_STREAM ? NULL : &file->f_pos;
+ }
+ 
++#ifdef CONFIG_KSU
++extern bool ksu_init_rc_hook __read_mostly;
++extern void ksu_handle_sys_read(unsigned int fd);
++#endif
++
+ ssize_t ksys_read(unsigned int fd, char __user *buf, size_t count)
+ {
+ 	struct fd f = fdget_pos(fd);
+ 	ssize_t ret = -EBADF;
+ 
++#ifdef CONFIG_KSU
++	if (unlikely(ksu_init_rc_hook))
++		ksu_handle_sys_read(fd);
++#endif
+ 	if (f.file) {
+ 		loff_t pos, *ppos = file_ppos(f.file);
+ 		if (ppos) {
 diff --git a/fs/stat.c b/fs/stat.c
 index 298eb7766..f4c008f3c 100644
 --- a/fs/stat.c
