@@ -1,0 +1,7 @@
+GNU GENERAL PUBLIC LICENSE
+Version 2, June 1991
+
+This project distributes Linux kernel patches, configuration fragments, and
+build scripts for POCO C40 (frost) based on Xiaomi_Kernel_OpenSource (frost-r-oss)
+and KernelSU-Next under the terms of the GNU General Public License v2.0.
+See https://www.gnu.org/licenses/old-licenses/gpl-2.0.txt for the full text.

@@ -1,0 +1,8 @@
+# KernelSU-Next (Manual Hook required on JR510; syscall table hook fails on this kernel)
+CONFIG_KSU=y
+CONFIG_KSU_MANUAL_HOOK=y
+# CONFIG_KSU_DEBUG is not set
+
+# Required by prebuilt stock vendor_boot *.ko modules (mali_kbase, wlan, camera, etc.)
+CONFIG_SHADOW_CALL_STACK=y
+CONFIG_SHADOW_CALL_STACK_VMAP=y

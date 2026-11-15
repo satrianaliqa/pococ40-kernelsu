@@ -1,0 +1,36 @@
+name: Build POCO C40 KernelSU-Next
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - 'build.sh'
+      - 'configs/**'
+      - 'patches/**'
+      - '.github/workflows/build.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            bc bison build-essential cpio curl flex git libelf-dev \
+            libssl-dev python3 tar xz-utils zlib1g-dev
+
+      - name: Build Image.gz
+        run: bash ./build.sh
+
+      - name: Upload Image.gz artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pococ40-kernelsu-Image.gz
+          path: |
+            Image.gz
+            SHA256SUMS.txt

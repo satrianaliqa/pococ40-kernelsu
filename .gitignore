@@ -1,0 +1,7 @@
+work/
+out/
+toolchain/
+kernel/
+*.img
+Image.gz
+SHA256SUMS.txt
