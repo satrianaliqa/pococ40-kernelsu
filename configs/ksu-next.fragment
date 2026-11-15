@@ -6,3 +6,8 @@ CONFIG_KSU_MANUAL_HOOK=y
 # Required by prebuilt stock vendor_boot *.ko modules (mali_kbase, wlan, camera, etc.)
 CONFIG_SHADOW_CALL_STACK=y
 CONFIG_SHADOW_CALL_STACK_VMAP=y
+
+# Metamodule (meta-overlayfs / magic_mount) support
+CONFIG_OVERLAY_FS=y
+CONFIG_TMPFS_XATTR=y
+CONFIG_TMPFS_POSIX_ACL=y
