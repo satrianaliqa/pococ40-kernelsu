@@ -15,9 +15,11 @@ Repositori ini dibuat agar siapa pun dapat:
 | **Device** | POCO C40 (`frost`) — JLQ JR510 (`aarch64`) |
 | **Base Kernel** | `MiCode/Xiaomi_Kernel_OpenSource` branch `frost-r-oss` (`Linux 5.4.242`) |
 | **Toolchain** | AOSP `clang-r416183b` (Clang 12.0.5 + LLD 12.0.5, `LLVM=1 LLVM_IAS=1`) |
-| **Root Solution** | `KernelSU-Next` commit `e3292239` (`33313`, **UAPI v5**) |
+| **Root Solution** | `KernelSU-Next` commit `e3292239` (`33313`, **UAPI v5**) + **SUSFS v2.4.0** |
 | **Manager APK** | Kompatibel dengan **KernelSU-Next Manager v3.4.2 (`33355-5`)** |
 | **Hook Mode** | `CONFIG_KSU_MANUAL_HOOK=y` (Manual Hook) |
+| **Root Hiding** | `CONFIG_KSU_SUSFS=y` (`SUS_PATH`, `SUS_MOUNT`, `SUS_KSTAT`, `SPOOF_UNAME`, `SPOOF_CMDLINE_OR_BOOTCONFIG`, `HIDE_KSU_SUSFS_SYMBOLS`, `OPEN_REDIRECT`, `SUS_MAP`, `PRIORITY_UID_FILTER`, `ENABLE_LOG`) |
+| **Metamodule Support** | `CONFIG_OVERLAY_FS=y`, `CONFIG_TMPFS_XATTR=y`, `CONFIG_TMPFS_POSIX_ACL=y` |
 | **Debug Log** | `CONFIG_KSU_DEBUG=n` (bebas spam log di `dmesg`) |
 
 ### Apa saja yang sudah di-patch?
@@ -37,6 +39,9 @@ Repositori ini dibuat agar siapa pun dapat:
    - **Catatan `adb shell su`:** Karena mode non-debug tidak otomatis memberi akses root ke `Shell (uid=2000)`, aktifkan toggle **Shell** di tab **Superuser** pada **KernelSU-Next Manager** jika ingin menggunakan `adb shell su`.
 4. **Auto-Retry Wi-Fi Probe (`icnss2`)**
    - Menambahkan mekanisme delayed retry probe di `drivers/soc/qcom/icnss2/` agar modul `qca_cld3_wlan.ko` bawaan ROM stock otomatis di-probe ulang saat boot jika gagal inisialisasi awal akibat race condition.
+5. **SUSFS v2.4.0 & Dukungan Metamodule**
+   - Mengintegrasikan `susfs4ksu` **v2.4.0** ke kernel Linux `5.4.242` (`include/linux/susfs*.h`, `fs/susfs.c`, VFS/proc/namespace/selinux hooks) dan `KernelSU-Next` tanpa mengubah layout struct KABI agar modul `.ko` stock `5.4.219` tetap kompatibel.
+   - Mengaktifkan `CONFIG_OVERLAY_FS=y`, `CONFIG_TMPFS_XATTR=y`, dan `CONFIG_TMPFS_POSIX_ACL=y` untuk dukungan metamodule (`meta-overlayfs` / `magic_mount`).
 
 ---
 
@@ -84,7 +89,7 @@ Script `build.sh` akan otomatis:
 1. Mengunduh toolchain AOSP `clang-r416183b` ke `./toolchain/` (jika belum ada).
 2. Meng-clone `MiCode/Xiaomi_Kernel_OpenSource` (`frost-r-oss`, `--depth=1`) ke `./work/kernel/`.
 3. Meng-clone `KernelSU-Next` di commit `e3292239` (UAPI v5).
-4. Menerapkan `patches/0001-pococ40-kernelsu-next.patch` dan `configs/ksu-next.fragment`.
+4. Menerapkan `patches/0001-pococ40-kernelsu-next.patch`, `patches/0002-kernelsu-next-susfs.patch`, dan `configs/ksu-next.fragment`.
 5. Menghasilkan `./Image.gz` dan `./SHA256SUMS.txt`.
 
 ### Build via GitHub Actions (Opsional)
@@ -98,8 +103,10 @@ Repo ini juga menyertakan workflow [`.github/workflows/build.yml`](.github/workf
 ```text
 .
 ├── .github/workflows/build.yml         # GitHub Actions build workflow (opsional)
-├── configs/ksu-next.fragment           # Konfigurasi KernelSU-Next & Shadow Call Stack
-├── patches/0001-pococ40-kernelsu-next.patch  # Patch Manual Hook & vendor module compat
+├── configs/ksu-next.fragment           # Konfigurasi KernelSU-Next, SUSFS & Shadow Call Stack
+├── patches/
+│   ├── 0001-pococ40-kernelsu-next.patch # Patch kernel Manual Hook, SUSFS v2.4.0 & vendor compat
+│   └── 0002-kernelsu-next-susfs.patch   # Patch integrasi SUSFS v2.4.0 untuk KernelSU-Next
 ├── build.sh                            # Script build lokal otomatis
 └── README.md
 ```

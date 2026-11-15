@@ -40,11 +40,16 @@ fi
 git -C "${KERNEL_DIR}/KernelSU-Next" checkout -f "${KSU_COMMIT}"
 ln -sfn ../KernelSU-Next/kernel "${KERNEL_DIR}/drivers/kernelsu"
 
-echo "[4/5] Applying POCO C40 + KernelSU-Next patch..."
+echo "[4/5] Applying POCO C40 + KernelSU-Next + SUSFS patches..."
 if git -C "${KERNEL_DIR}" apply --check "${ROOT_DIR}/patches/0001-pococ40-kernelsu-next.patch" 2>/dev/null; then
     git -C "${KERNEL_DIR}" apply "${ROOT_DIR}/patches/0001-pococ40-kernelsu-next.patch"
 else
-    echo "Patch already applied (or clean check skipped)."
+    echo "Kernel patch already applied (or clean check skipped)."
+fi
+if git -C "${KERNEL_DIR}/KernelSU-Next" apply --check "${ROOT_DIR}/patches/0002-kernelsu-next-susfs.patch" 2>/dev/null; then
+    git -C "${KERNEL_DIR}/KernelSU-Next" apply "${ROOT_DIR}/patches/0002-kernelsu-next-susfs.patch"
+else
+    echo "KernelSU-Next SUSFS patch already applied (or clean check skipped)."
 fi
 
 export PATH="${TOOLCHAIN_DIR}/bin:${PATH}"
