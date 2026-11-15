@@ -43,6 +43,167 @@ index 0e16a9980..6c8c4a6c8 100644
  	if (disposition != INPUT_IGNORE_EVENT && type != EV_SYN)
  		add_input_randomness(type, code, value);
  
+diff --git a/drivers/soc/qcom/icnss2/main.c b/drivers/soc/qcom/icnss2/main.c
+index 2faf27a4b..0251a924a 100644
+--- a/drivers/soc/qcom/icnss2/main.c
++++ b/drivers/soc/qcom/icnss2/main.c
+@@ -69,6 +69,8 @@
+ 
+ #define ICNSS_QUIRKS_DEFAULT		BIT(FW_REJUVENATE_ENABLE)
+ #define ICNSS_MAX_PROBE_CNT		2
++#define ICNSS_PROBE_RETRY_MAX		15
++#define ICNSS_PROBE_RETRY_MS		2000
+ 
+ #define ICNSS_BDF_TYPE_DEFAULT         ICNSS_BDF_ELF
+ 
+@@ -197,6 +199,8 @@ char *icnss_driver_event_to_str(enum icnss_driver_event_type type)
+ 		return "QDSS_TRACE_REQ_DATA";
+ 	case ICNSS_DRIVER_EVENT_SUBSYS_RESTART_LEVEL:
+ 		return "SUBSYS_RESTART_LEVEL";
++	case ICNSS_DRIVER_EVENT_RETRY_PROBE:
++		return "RETRY_PROBE";
+ 	case ICNSS_DRIVER_EVENT_MAX:
+ 		return "EVENT_MAX";
+ 	}
+@@ -736,6 +740,35 @@ static int icnss_driver_event_server_exit(struct icnss_priv *priv)
+ 	return 0;
+ }
+ 
++static void icnss_probe_retry_work_fn(struct work_struct *work)
++{
++	struct icnss_priv *priv = container_of(to_delayed_work(work),
++					       struct icnss_priv,
++					       probe_retry_work);
++
++	icnss_driver_event_post(priv, ICNSS_DRIVER_EVENT_RETRY_PROBE, 0, NULL);
++}
++
++static void icnss_schedule_probe_retry(struct icnss_priv *priv)
++{
++	if (!priv->ops || test_bit(ICNSS_DRIVER_PROBED, &priv->state) ||
++	    test_bit(ICNSS_FW_DOWN, &priv->state))
++		return;
++
++	if (priv->probe_retry_cnt >= ICNSS_PROBE_RETRY_MAX) {
++		icnss_pr_err("Exceeded max probe retries (%d)\n",
++			     priv->probe_retry_cnt);
++		return;
++	}
++
++	priv->probe_retry_cnt++;
++	icnss_pr_info("Scheduling driver probe retry %d/%d in %dms\n",
++		      priv->probe_retry_cnt, ICNSS_PROBE_RETRY_MAX,
++		      ICNSS_PROBE_RETRY_MS);
++	schedule_delayed_work(&priv->probe_retry_work,
++			      msecs_to_jiffies(ICNSS_PROBE_RETRY_MS));
++}
++
+ static int icnss_call_driver_probe(struct icnss_priv *priv)
+ {
+ 	int ret = 0;
+@@ -767,11 +800,13 @@ static int icnss_call_driver_probe(struct icnss_priv *priv)
+ 
+ 	icnss_block_shutdown(false);
+ 	set_bit(ICNSS_DRIVER_PROBED, &priv->state);
++	priv->probe_retry_cnt = 0;
+ 
+ 	return 0;
+ 
+ out:
+ 	icnss_hw_power_off(priv);
++	icnss_schedule_probe_retry(priv);
+ 	return ret;
+ }
+ 
+@@ -1163,6 +1198,7 @@ static int icnss_driver_event_register_driver(struct icnss_priv *priv,
+ 		return -EEXIST;
+ 
+ 	priv->ops = data;
++	priv->probe_retry_cnt = 0;
+ 
+ 	if (test_bit(SKIP_QMI, &priv->ctrl_params.quirks))
+ 		set_bit(ICNSS_FW_READY, &priv->state);
+@@ -1199,18 +1235,33 @@ static int icnss_driver_event_register_driver(struct icnss_priv *priv,
+ 
+ 	icnss_block_shutdown(false);
+ 	set_bit(ICNSS_DRIVER_PROBED, &priv->state);
++	priv->probe_retry_cnt = 0;
+ 
+ 	return 0;
+ 
+ power_off:
+ 	icnss_hw_power_off(priv);
++	icnss_schedule_probe_retry(priv);
+ out:
+ 	return ret;
+ }
+ 
++static int icnss_driver_event_retry_probe(struct icnss_priv *priv)
++{
++	if (!priv->ops || !test_bit(ICNSS_FW_READY, &priv->state) ||
++	    test_bit(ICNSS_DRIVER_PROBED, &priv->state) ||
++	    test_bit(ICNSS_FW_DOWN, &priv->state))
++		return 0;
++
++	return icnss_call_driver_probe(priv);
++}
++
+ static int icnss_driver_event_unregister_driver(struct icnss_priv *priv,
+ 							 void *data)
+ {
++	cancel_delayed_work_sync(&priv->probe_retry_work);
++	priv->probe_retry_cnt = 0;
++
+ 	if (!test_bit(ICNSS_DRIVER_PROBED, &priv->state)) {
+ 		priv->ops = NULL;
+ 		goto out;
+@@ -1548,6 +1599,9 @@ static void icnss_driver_event_work(struct work_struct *work)
+ 		case ICNSS_DRIVER_EVENT_SUBSYS_RESTART_LEVEL:
+ 			ret = icnss_subsys_restart_level_type(priv, event->data);
+ 			break;
++		case ICNSS_DRIVER_EVENT_RETRY_PROBE:
++			ret = icnss_driver_event_retry_probe(priv);
++			break;
+ 		default:
+ 			icnss_pr_err("Invalid Event type: %d", event->type);
+ 			kfree(event);
+@@ -4029,6 +4083,7 @@ static int icnss_probe(struct platform_device *pdev)
+ 	}
+ 
+ 	INIT_WORK(&priv->event_work, icnss_driver_event_work);
++	INIT_DELAYED_WORK(&priv->probe_retry_work, icnss_probe_retry_work_fn);
+ 	INIT_LIST_HEAD(&priv->event_list);
+ 
+ 	priv->soc_wake_wq = alloc_workqueue("icnss_soc_wake_event",
+@@ -4145,6 +4200,7 @@ static int icnss_remove(struct platform_device *pdev)
+ 	}
+ 
+ 	icnss_unregister_fw_service(priv);
++	cancel_delayed_work_sync(&priv->probe_retry_work);
+ 	if (priv->event_wq)
+ 		destroy_workqueue(priv->event_wq);
+ 
+diff --git a/drivers/soc/qcom/icnss2/main.h b/drivers/soc/qcom/icnss2/main.h
+index b75767a07..da5e6948a 100644
+--- a/drivers/soc/qcom/icnss2/main.h
++++ b/drivers/soc/qcom/icnss2/main.h
+@@ -63,6 +63,7 @@ enum icnss_driver_event_type {
+ 	ICNSS_DRIVER_EVENT_M3_DUMP_UPLOAD_REQ,
+ 	ICNSS_DRIVER_EVENT_QDSS_TRACE_REQ_DATA,
+ 	ICNSS_DRIVER_EVENT_SUBSYS_RESTART_LEVEL,
++	ICNSS_DRIVER_EVENT_RETRY_PROBE,
+ 	ICNSS_DRIVER_EVENT_MAX,
+ };
+ 
+@@ -384,6 +385,8 @@ struct icnss_priv {
+ 	struct work_struct event_work;
+ 	struct work_struct fw_recv_msg_work;
+ 	struct work_struct soc_wake_msg_work;
++	struct delayed_work probe_retry_work;
++	int probe_retry_cnt;
+ 	struct workqueue_struct *event_wq;
+ 	struct workqueue_struct *soc_wake_wq;
+ 	phys_addr_t msa_pa;
 diff --git a/fs/exec.c b/fs/exec.c
 index 6860cd572..61b9a550b 100644
 --- a/fs/exec.c

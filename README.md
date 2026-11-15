@@ -35,6 +35,8 @@ Repositori ini dibuat agar siapa pun dapat:
 3. **Tanpa Spam `dmesg`**
    - `CONFIG_KSU_DEBUG=n` membuat `dmesg` tetap bersih.
    - **Catatan `adb shell su`:** Karena mode non-debug tidak otomatis memberi akses root ke `Shell (uid=2000)`, aktifkan toggle **Shell** di tab **Superuser** pada **KernelSU-Next Manager** jika ingin menggunakan `adb shell su`.
+4. **Auto-Retry Wi-Fi Probe (`icnss2`)**
+   - Menambahkan mekanisme delayed retry probe di `drivers/soc/qcom/icnss2/` agar modul `qca_cld3_wlan.ko` bawaan ROM stock otomatis di-probe ulang saat boot jika gagal inisialisasi awal akibat race condition.
 
 ---
 
