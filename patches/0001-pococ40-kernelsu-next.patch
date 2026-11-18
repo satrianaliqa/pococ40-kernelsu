@@ -178,7 +178,7 @@ index 84c1015ef..d0eeb32b2 100755
  				sia81xx->owi_delay_us = temp_us;
  			else
 diff --git a/drivers/soc/jlq/bridge/jlq_bridge.c b/drivers/soc/jlq/bridge/jlq_bridge.c
-index aacdd0f97..46cc65763 100755
+index aacdd0f97..5d7293ae4 100755
 --- a/drivers/soc/jlq/bridge/jlq_bridge.c
 +++ b/drivers/soc/jlq/bridge/jlq_bridge.c
 @@ -701,7 +701,8 @@ ssize_t bridge_write(struct bridge_channel *ch, const char *buf,
@@ -211,17 +211,37 @@ index aacdd0f97..46cc65763 100755
  	mutex_lock(&drvdata->read_sem);
  
  	if (check_para(drvdata) != 0)
-@@ -789,7 +794,8 @@ int bridge_name_open(const char *name, uint32_t edge,
+@@ -785,15 +790,24 @@ int bridge_name_open(const char *name, uint32_t edge,
+ 		return status;
+ 
+ 	mutex_lock(&drvdata->op_mutex);
++	drvdata->notify = notify;
++	drvdata->priv = priv;
+ 	if (drvdata && drvdata->ops && drvdata->ops->open)
  		status = drvdata->ops->open(drvdata);
- 	else
+-	else
++	else {
  		BRIDGE_ERR("open err: drvdata=%p, ops=%p, open=%p\n",
 -			drvdata, drvdata->ops, drvdata->ops->open);
 +			drvdata, drvdata ? drvdata->ops : NULL,
 +			(drvdata && drvdata->ops) ? drvdata->ops->open : NULL);
++		status = -EINVAL;
++	}
  
- 	drvdata->notify = notify;
- 	drvdata->priv = priv;
-@@ -805,12 +811,16 @@ int bridge_release(struct bridge_channel *ch)
+-	drvdata->notify = notify;
+-	drvdata->priv = priv;
+-	*_ch = drvdata;
++	if (!status)
++		*_ch = drvdata;
++	else {
++		drvdata->notify = NULL;
++		drvdata->priv = NULL;
++		*_ch = NULL;
++	}
+ 	mutex_unlock(&drvdata->op_mutex);
+ 
+ 	return status;
+@@ -805,12 +819,16 @@ int bridge_release(struct bridge_channel *ch)
  	struct bridge_channel *drvdata = ch;
  	int status = -EINVAL;
  
@@ -239,7 +259,7 @@ index aacdd0f97..46cc65763 100755
  	}
  	mutex_unlock(&drvdata->op_mutex);
  	return status;
-@@ -875,8 +885,8 @@ static ssize_t info_show(struct device *dev,
+@@ -875,8 +893,8 @@ static ssize_t info_show(struct device *dev,
  		ret = drvdata->ops->info_show(drvdata, buf);
  	else {
  		BRIDGE_ERR("%s err: drvdata=%p, ops=%p, %s=%p\n", __func__,
@@ -250,7 +270,7 @@ index aacdd0f97..46cc65763 100755
  		return -EINVAL;
  	}
  	return ret;
-@@ -899,7 +909,8 @@ static ssize_t reg_status_show(struct device *dev,
+@@ -899,7 +917,8 @@ static ssize_t reg_status_show(struct device *dev,
  		ret = drvdata->ops->reg_show(drvdata, buf);
  	else {
  		BRIDGE_ERR("reg_show err: drvdata=%p, ops=%p, info_show=%p\n",
@@ -261,7 +281,7 @@ index aacdd0f97..46cc65763 100755
  	}
  	return ret;
 diff --git a/drivers/soc/jlq/crypto/fde-jlq.c b/drivers/soc/jlq/crypto/fde-jlq.c
-index caa428e86..b4250be4e 100644
+index caa428e86..e759aee47 100644
 --- a/drivers/soc/jlq/crypto/fde-jlq.c
 +++ b/drivers/soc/jlq/crypto/fde-jlq.c
 @@ -1337,9 +1337,8 @@ static int jlq_fde_get_device_tree_data(struct platform_device *pdev,
@@ -285,7 +305,26 @@ index caa428e86..b4250be4e 100644
  		pr_err("hblkctrl_base ioremap failed\n");
  		return -ENOMEM;
  	}
-@@ -1567,9 +1566,6 @@ static int jlq_fde_remove(struct platform_device *pdev)
+@@ -1538,11 +1537,16 @@ static int jlq_fde_probe(struct platform_device *pdev)
+ 
+ 	goto out;
+ 
++err_fde_dev:
++#ifdef USE_OPTEE_KEYCONFIG
++	fde_tee_deinit(fde_dev);
++#endif
++	goto err_free_dev;
+ err_fde_condex:
+ #ifdef USE_OPTEE_KEYCONFIG
+-	tee_client_close_context(fde_dev->ctx);
++	tee_client_close_context(ctx);
+ #endif
+-err_fde_dev:
++err_free_dev:
+ 	if (fde_dev)
+ 		devm_kfree(&pdev->dev, fde_dev);
+ out:
+@@ -1567,9 +1571,6 @@ static int jlq_fde_remove(struct platform_device *pdev)
  	clk_disable_unprepare(fde_dev->fde_bus_clk);
  	clk_disable_unprepare(fde_dev->fde_clk);
  
@@ -670,7 +709,7 @@ index d88a897d1..e439d458e 100644
  
  	return 0;
 diff --git a/drivers/soc/jlq/pmic/regulator/jlq-regulator.c b/drivers/soc/jlq/pmic/regulator/jlq-regulator.c
-index d2019f1f8..f70afecd8 100644
+index d2019f1f8..b22755c42 100644
 --- a/drivers/soc/jlq/pmic/regulator/jlq-regulator.c
 +++ b/drivers/soc/jlq/pmic/regulator/jlq-regulator.c
 @@ -274,6 +274,9 @@ int mailbox_set_voltage(struct regulator_dev *rdev, int min_uV, int max_uV)
@@ -683,7 +722,7 @@ index d2019f1f8..f70afecd8 100644
  	if ((volt_new == vreg->pre_voltage) || !enable_dvfs_flag)
  		goto print_ipc;
  
-@@ -642,15 +645,6 @@ static int jlq_regulator_probe(struct platform_device *pdev)
+@@ -642,16 +645,9 @@ static int jlq_regulator_probe(struct platform_device *pdev)
  	reg_config.of_node	= dev->of_node;
  	reg_config.regmap = regmap;
  
@@ -697,24 +736,29 @@ index d2019f1f8..f70afecd8 100644
 -	}
 -
  	if (!ch && vreg->enable_request) {
++		init_completion(&cmd_complete);
++		spin_lock_init(&mailbox_lock);
  		rc = bridge_name_open("VREGULATOR", 4, &ch, vreg, regulator_notify);
  		if (rc) {
-@@ -659,9 +653,12 @@ static int jlq_regulator_probe(struct platform_device *pdev)
+ 			dev_err(dev, "open bridge failed; err=%d\n", rc);
+@@ -659,11 +655,12 @@ static int jlq_regulator_probe(struct platform_device *pdev)
  		}
  		dev_node = of_find_compatible_node(NULL,
  								NULL, "jlq,top-mailbox-base");
 -
 -		mailbox_arbiter_base = of_iomap(dev_node, 0);
 -		init_regulator_arbiter();
+-		init_completion(&cmd_complete);
+-		spin_lock_init(&mailbox_lock);
 +		if (dev_node) {
 +			mailbox_arbiter_base = of_iomap(dev_node, 0);
 +			of_node_put(dev_node);
 +		}
 +		if (mailbox_arbiter_base)
 +			init_regulator_arbiter();
- 		init_completion(&cmd_complete);
- 		spin_lock_init(&mailbox_lock);
  		ipc_log_reg_s3s8 = ipc_log_context_create(
+ 				IPC_LOG_PAGES, "jlq-reg-s3s8", 0);
+ 		debugfs_dir = debugfs_create_dir("test-dvfs", NULL);
 @@ -672,6 +669,16 @@ static int jlq_regulator_probe(struct platform_device *pdev)
  		debugfs_create_u32("enable", 0600, debugfs_dir, &enable_dvfs_flag);
  
@@ -843,7 +887,7 @@ index 53af04c14..79adb7fb2 100644
  	if (val > 0) {
  		mutex_lock(&sm->i2c_rw_lock);
 diff --git a/drivers/soc/jlq/reg_util.c b/drivers/soc/jlq/reg_util.c
-index ede9a04de..746b182e4 100644
+index ede9a04de..2b0879c38 100644
 --- a/drivers/soc/jlq/reg_util.c
 +++ b/drivers/soc/jlq/reg_util.c
 @@ -262,6 +262,8 @@ static int devm_proc_open_show(struct seq_file *m, void *v)
@@ -859,7 +903,7 @@ index ede9a04de..746b182e4 100644
  static ssize_t devm_proc_write(struct file *file,
          const char __user *buffer, size_t count, loff_t *pos)
  {
-+	if (!count)
++	if (!count || count >= PAGE_SIZE)
 +		return -EINVAL;
 +
  	mutex_lock(&dev_data->lock);
@@ -983,7 +1027,7 @@ index ca786a349..2d106cd12 100644
  	vendor_info = qcom_smem_get(QCOM_SMEM_HOST_ANY, SMEM_ID_VENDOR2, &item_size);
  	if (IS_ERR(vendor_info)) {
 diff --git a/drivers/soc/jlq/sysdump/jlq_isr_monitor.c b/drivers/soc/jlq/sysdump/jlq_isr_monitor.c
-index cff080195..40f9e6ce5 100644
+index cff080195..caac3902c 100644
 --- a/drivers/soc/jlq/sysdump/jlq_isr_monitor.c
 +++ b/drivers/soc/jlq/sysdump/jlq_isr_monitor.c
 @@ -39,10 +39,12 @@ void show_isr_monitor(void)
@@ -1029,7 +1073,8 @@ index cff080195..40f9e6ce5 100644
 +	}
  
  	len = sizeof(struct jlq_irq_data) +
- 		num_present_cpus() * sizeof(struct jlq_irq_stat *);
+-		num_present_cpus() * sizeof(struct jlq_irq_stat *);
++		num_possible_cpus() * sizeof(struct jlq_irq_stat *);
  
 -	data = krealloc(data, len, GFP_KERNEL);
 +	new_data = krealloc(data, len, GFP_KERNEL);
@@ -1039,8 +1084,10 @@ index cff080195..40f9e6ce5 100644
 +	}
 +	data = new_data;
  
- 	for (i = 0; i < num_present_cpus(); i++) {
- 		data->stat[i] = devm_kmalloc(&pdev->dev,
+-	for (i = 0; i < num_present_cpus(); i++) {
+-		data->stat[i] = devm_kmalloc(&pdev->dev,
++	for_each_possible_cpu(i) {
++		data->stat[i] = devm_kzalloc(&pdev->dev,
  			data->max_irqs * sizeof(struct jlq_irq_stat),
  			GFP_KERNEL);
 +		if (!data->stat[i]) {
@@ -1049,7 +1096,8 @@ index cff080195..40f9e6ce5 100644
 +		}
  	}
  
- 	data->boot_cpu_stat = devm_kmalloc(&pdev->dev,
+-	data->boot_cpu_stat = devm_kmalloc(&pdev->dev,
++	data->boot_cpu_stat = devm_kzalloc(&pdev->dev,
  			sizeof(struct jlq_irq_stat) * data->max_irqs,
  			GFP_KERNEL);
 +	if (!data->boot_cpu_stat) {
@@ -1059,7 +1107,15 @@ index cff080195..40f9e6ce5 100644
  
  	gidata = data;
  	isr_monitor_clear(data);
-@@ -253,7 +271,12 @@ static int isr_monitor_probe(struct platform_device *pdev)
+@@ -247,13 +265,20 @@ static int isr_monitor_probe(struct platform_device *pdev)
+ 	return 0;
+ err:
+ 	hrtimer_cancel(&data->isr_monitor_hrtimer);
++	gidata = NULL;
++	kfree(data);
+ 	return ret;
+ }
+ 
  static int isr_monitor_remove(struct platform_device *pdev)
  {
  	struct jlq_irq_data *data = platform_get_drvdata(pdev);
@@ -1073,19 +1129,38 @@ index cff080195..40f9e6ce5 100644
  	return 0;
  }
 diff --git a/drivers/soc/jlq/sysdump/jlq_slave_dummy.c b/drivers/soc/jlq/sysdump/jlq_slave_dummy.c
-index f020e95fb..3bdeb1c3b 100644
+index f020e95fb..f31d98f0a 100644
 --- a/drivers/soc/jlq/sysdump/jlq_slave_dummy.c
 +++ b/drivers/soc/jlq/sysdump/jlq_slave_dummy.c
-@@ -114,6 +114,8 @@ static void dummy_check(struct jlq_dummy_data *data)
+@@ -114,8 +114,10 @@ static void dummy_check(struct jlq_dummy_data *data)
  		if (status)
  			break;
  	}
 +	if (i >= data->supported_slaves)
 +		return;
  
- 	dummy_write(data, 0x3 << i, PD_INT_CLR_CFG);
+-	dummy_write(data, 0x3 << i, PD_INT_CLR_CFG);
++	dummy_write(data, 0x3 << (2 * i), PD_INT_CLR_CFG);
  	dev_err(data->dev, "dummy PD_RD_WR_INT_RPT = 0x%x  raw id %d\n", reg, i);
-@@ -202,14 +204,6 @@ static int jlq_dummy_parse_dt(struct platform_device *pdev,
+ 	dummy_get_report(data, data->slave_rpt_id[i], &report);
+ 
+@@ -139,7 +141,8 @@ static irqreturn_t dummy_irq_handler(int irq, void *dev_id)
+ 
+ static int dummy_panic_notifier(struct notifier_block *nb, unsigned long action, void *p)
+ {
+-	dummy_check(g_data);
++	if (g_data)
++		dummy_check(g_data);
+ 	return NOTIFY_DONE;
+ }
+ static struct notifier_block dummy_nb = {
+@@ -197,39 +200,53 @@ static int jlq_dummy_parse_dt(struct platform_device *pdev,
+ 	data->supported_slaves =
+ 		of_property_count_strings(pdev->dev.of_node, key);
+ 
+-	if (data->supported_slaves < 0 || data->supported_slaves > 20) {
++	if (data->supported_slaves <= 0 || data->supported_slaves > 20) {
+ 		dev_err(&pdev->dev, "invalid dummy-slaves property");
  		return -EINVAL;
  	}
  
@@ -1098,9 +1173,58 @@ index f020e95fb..3bdeb1c3b 100644
 -	}
 -
  	str_arr = kmalloc(data->supported_slaves * sizeof(char *), GFP_KERNEL);
++	if (!str_arr)
++		return -ENOMEM;
++
  	ret = of_property_read_string_array(pdev->dev.of_node,
  		key, (const char **)str_arr, data->supported_slaves);
-@@ -241,7 +235,7 @@ static int jlq_dummy_probe(struct platform_device *pdev)
+ 	if (ret <= 0) {
+ 		dev_err(&pdev->dev, "get dummy-slaves failed\n");
++		ret = ret ? ret : -EINVAL;
+ 		goto error;
+ 	}
+ 
+ 	slave_name = data->slave_names;
+-	for (len = 0; len < data->supported_slaves; len++)
++	for (len = 0; len < data->supported_slaves; len++) {
+ 		slave_name[len] = kstrdup(str_arr[len], GFP_KERNEL);
++		if (!slave_name[len]) {
++			ret = -ENOMEM;
++			goto err_free_names;
++		}
++	}
+ 
+ 	key = "dummy-rpt-id";
+ 	data->slave_rpt_id = devm_kmalloc(data->dev,
+ 		sizeof(int) * data->supported_slaves, GFP_KERNEL);
+-	of_property_read_u32_array(pdev->dev.of_node,
++	if (!data->slave_rpt_id) {
++		ret = -ENOMEM;
++		goto err_free_names;
++	}
++	ret = of_property_read_u32_array(pdev->dev.of_node,
+ 		key, data->slave_rpt_id,  data->supported_slaves);
++	if (ret) {
++		dev_err(&pdev->dev, "get dummy-rpt-id failed\n");
++		goto err_free_names;
++	}
+ 
+ 	kfree(str_arr);
+ 	return 0;
++err_free_names:
++	while (len > 0) {
++		kfree(slave_name[--len]);
++		slave_name[len] = NULL;
++	}
+ error:
+ 	kfree(str_arr);
+ 	return ret;
+@@ -237,11 +254,11 @@ static int jlq_dummy_parse_dt(struct platform_device *pdev,
+ 
+ static int jlq_dummy_probe(struct platform_device *pdev)
+ {
+-	int ret = 0;
++	int i, ret = 0;
  	struct jlq_dummy_data *data;
  
  	data = devm_kzalloc(&pdev->dev,
@@ -1109,7 +1233,7 @@ index f020e95fb..3bdeb1c3b 100644
  	if (IS_ERR_OR_NULL(data)) {
  		dev_err(&pdev->dev, "alloc mem failed\n");
  		return -ENOMEM;
-@@ -271,6 +265,7 @@ static int jlq_dummy_probe(struct platform_device *pdev)
+@@ -271,12 +288,17 @@ static int jlq_dummy_probe(struct platform_device *pdev)
  
  	jlq_dummy_cfg(data);
  	g_data = data;
@@ -1117,13 +1241,25 @@ index f020e95fb..3bdeb1c3b 100644
  	atomic_notifier_chain_register(&panic_notifier_list, &dummy_nb);
  	//jlq_dummy_test(data);
  	pr_info("Success to register dummy driver\n");
-@@ -284,10 +279,13 @@ static int jlq_dummy_remove(struct platform_device *pdev)
+ 
+ 	return 0;
+ error:
++	for (i = 0; i < data->supported_slaves; i++) {
++		kfree(data->slave_names[i]);
++		data->slave_names[i] = NULL;
++	}
+ 	return ret;
+ }
+ 
+@@ -284,10 +306,15 @@ static int jlq_dummy_remove(struct platform_device *pdev)
  {
  	int i;
  	struct jlq_dummy_data *data = dev_get_drvdata(&pdev->dev);
 -	char **slave_name = data->slave_names;
 +
 +	atomic_notifier_chain_unregister(&panic_notifier_list, &dummy_nb);
++	if (data == g_data)
++		g_data = NULL;
 +	if (!data)
 +		return 0;
  
@@ -1192,7 +1328,7 @@ index 9f62b9664..257ba2ee6 100644
  		tmdev->ops->disable(tmdev);
  
 diff --git a/drivers/soc/jlq/touchscreen/lct_tp_selftest.c b/drivers/soc/jlq/touchscreen/lct_tp_selftest.c
-index 3c86c9c51..ccf55f848 100644
+index 3c86c9c51..f4d4148e2 100644
 --- a/drivers/soc/jlq/touchscreen/lct_tp_selftest.c
 +++ b/drivers/soc/jlq/touchscreen/lct_tp_selftest.c
 @@ -77,6 +77,9 @@ static ssize_t tp_selftest_proc_write(struct file *file, const char __user *buf,
@@ -1205,7 +1341,7 @@ index 3c86c9c51..ccf55f848 100644
  	if(copy_from_user(tmp_data, buf, size)) {
  		TP_LOGE("copy_from_user() fail.\n");
  		return -EFAULT;
-@@ -132,6 +135,8 @@ static ssize_t tp_selftest_proc_read(struct file *file, char __user *buf, size_t
+@@ -132,10 +135,10 @@ static ssize_t tp_selftest_proc_read(struct file *file, char __user *buf, size_t
  		tp_selftest_work_func();
  
  	page = kzalloc(128, GFP_KERNEL);
@@ -1213,7 +1349,11 @@ index 3c86c9c51..ccf55f848 100644
 +		return -ENOMEM;
  	cnt = sprintf(page, "%s", ft_tp_selftest_status);
  	cnt = simple_read_from_buffer(buf, size, ppos, page, cnt);
- 	if (*ppos != cnt)
+-	if (*ppos != cnt)
+-		*ppos = cnt;
+ 	TP_LOGW("page=%s, cnt=%d\n", page, cnt);
+ 	kfree(page);
+ 
 diff --git a/drivers/soc/jlq/touchscreen/novatek/nt36xxx.c b/drivers/soc/jlq/touchscreen/novatek/nt36xxx.c
 index 9f966cc96..3a5d0352f 100644
 --- a/drivers/soc/jlq/touchscreen/novatek/nt36xxx.c
@@ -1265,7 +1405,7 @@ index 9f966cc96..3a5d0352f 100644
  		if (retries < 20) {
  			if (copy_to_user(buff, str, count)) {
 diff --git a/drivers/soc/jlq/usb/misc/type-c-pericom.c b/drivers/soc/jlq/usb/misc/type-c-pericom.c
-index 435c89002..cab1e4097 100644
+index 435c89002..a6f31539d 100644
 --- a/drivers/soc/jlq/usb/misc/type-c-pericom.c
 +++ b/drivers/soc/jlq/usb/misc/type-c-pericom.c
 @@ -441,6 +441,8 @@ static int piusb_probe(struct i2c_client *i2c, const struct i2c_device_id *id)
@@ -1277,7 +1417,12 @@ index 435c89002..cab1e4097 100644
  	/* Update initial state to USB */
  	piusb_irq(pi_usb->irq, pi_usb);
  
-@@ -453,9 +455,6 @@ static int piusb_probe(struct i2c_client *i2c, const struct i2c_device_id *id)
+@@ -449,22 +451,24 @@ static int piusb_probe(struct i2c_client *i2c, const struct i2c_device_id *id)
+ 					PERICOM_I2C_NAME, pi_usb);
+ 	if (ret) {
+ 		dev_err(&i2c->dev, "irq(%d) req failed-%d\n", pi_usb->irq, ret);
+-		goto i2c_disable;
++		goto err_cancel_work;
  	}
  	enable_irq_wake(pi_usb->irq);
  
@@ -1287,11 +1432,66 @@ index 435c89002..cab1e4097 100644
  	ret = sysfs_create_group(&i2c->dev.kobj, &PI5USB30216C_attr_group);
  	if (ret) {
  		dev_err(&i2c->dev, "sysfs create group failed\n");
+-		goto i2c_disable;
++		goto err_free_irq;
+ 	}
+ 	dev_dbg(&i2c->dev, "%s finished, addr:%d\n", __func__, i2c->addr);
+ 
+ 	return 0;
+ 
++err_free_irq:
++	disable_irq_wake(pi_usb->irq);
++	devm_free_irq(&i2c->dev, pi_usb->irq, pi_usb);
++err_cancel_work:
++	cancel_delayed_work_sync(&pi_usb->handle_detach_work);
+ i2c_disable:
+ 	piusb_i2c_enable(pi_usb, false, pi_usb->current_mode);
+ gpio_disable:
+@@ -472,18 +476,26 @@ static int piusb_probe(struct i2c_client *i2c, const struct i2c_device_id *id)
+ 		piusb_gpio_config(pi_usb, false);
+ out:
+ 	devm_kfree(&i2c->dev, pi_usb);
++	pi_usb = NULL;
+ 	return ret;
+ }
+ 
+ static int piusb_remove(struct i2c_client *i2c)
+ {
+-	struct pi_usb_type_c *pi_usb = i2c_get_clientdata(i2c);
++	struct pi_usb_type_c *pi = i2c_get_clientdata(i2c);
+ 
+-	piusb_i2c_enable(pi_usb, false, pi_usb->current_mode);
++	sysfs_remove_group(&i2c->dev.kobj, &PI5USB30216C_attr_group);
++	disable_irq_wake(pi->irq);
++	devm_free_irq(&i2c->dev, pi->irq, pi);
++	cancel_delayed_work_sync(&pi->handle_detach_work);
+ 
+-	if (gpio_is_valid(pi_usb->enb_gpio))
+-		piusb_gpio_config(pi_usb, false);
+-	devm_kfree(&i2c->dev, pi_usb);
++	piusb_i2c_enable(pi, false, pi->current_mode);
++
++	if (gpio_is_valid(pi->enb_gpio))
++		piusb_gpio_config(pi, false);
++	if (pi == pi_usb)
++		pi_usb = NULL;
++	devm_kfree(&i2c->dev, pi);
+ 
+ 	return 0;
+ }
 diff --git a/drivers/soc/jlq/usb/phy/phy-jlq-dwc2.c b/drivers/soc/jlq/usb/phy/phy-jlq-dwc2.c
-index 3bde97e14..dd1c99487 100644
+index 3bde97e14..54c94b678 100644
 --- a/drivers/soc/jlq/usb/phy/phy-jlq-dwc2.c
 +++ b/drivers/soc/jlq/usb/phy/phy-jlq-dwc2.c
-@@ -856,9 +856,10 @@ static int jlq_dwc2_otg_probe(struct platform_device *pdev)
+@@ -753,6 +753,7 @@ static int jlq_dwc2_otg_init_typec_class(struct jlq_otg *jlq_otg)
+ 	jlq_otg->typec_port = typec_register_port(jlq_otg->phy.dev, &jlq_otg->typec_caps);
+ 	if (IS_ERR(jlq_otg->typec_port)) {
+ 		ret = PTR_ERR(jlq_otg->typec_port);
++		jlq_otg->typec_port = NULL;
+ 		pr_err("failed to register typec_port rc=%d\n", ret);
+ 	}
+ 
+@@ -856,9 +857,10 @@ static int jlq_dwc2_otg_probe(struct platform_device *pdev)
  		jlq_otg->pwr_usb_rst = 0;
  	} else {
  		jlq_otg->pwr_usb_rst = devm_ioremap_resource(&pdev->dev, res);
@@ -1304,7 +1504,7 @@ index 3bde97e14..dd1c99487 100644
  			goto err_clk_get;
  		}
  	}
-@@ -869,9 +870,10 @@ static int jlq_dwc2_otg_probe(struct platform_device *pdev)
+@@ -869,9 +871,10 @@ static int jlq_dwc2_otg_probe(struct platform_device *pdev)
  		jlq_otg->usb_rst = 0;
  	} else {
  		jlq_otg->usb_rst = devm_ioremap_resource(&pdev->dev, res);
@@ -1317,7 +1517,7 @@ index 3bde97e14..dd1c99487 100644
  			goto err_clk_get;
  		}
  	}
-@@ -884,9 +886,10 @@ static int jlq_dwc2_otg_probe(struct platform_device *pdev)
+@@ -884,9 +887,10 @@ static int jlq_dwc2_otg_probe(struct platform_device *pdev)
  	}
  
  	jlq_otg->regs = devm_ioremap_resource(&pdev->dev, res);
@@ -1330,7 +1530,50 @@ index 3bde97e14..dd1c99487 100644
  		goto err_clk_get;
  	}
  
-@@ -1056,11 +1059,8 @@ static int jlq_dwc2_otg_probe(struct platform_device *pdev)
+@@ -975,7 +979,7 @@ static int jlq_dwc2_otg_probe(struct platform_device *pdev)
+ 	ret = usb_add_phy_dev(&jlq_otg->phy);
+ 	if (ret) {
+ 		dev_err(&pdev->dev, "usb_add_phy failed\n");
+-		goto err_typec_init;
++		goto err_add_phy;
+ 	}
+ 
+ 	platform_set_drvdata(pdev, jlq_otg);
+@@ -994,6 +998,7 @@ static int jlq_dwc2_otg_probe(struct platform_device *pdev)
+ 			{
+ 				dev_err(&pdev->dev, "Cannot register notifier EXTCON_USB for %s \n",
+ 					extcon_get_edev_name(jlq_otg->phy.edev) );
++				goto err_extcon_vbus;
+ 			}
+ 			else
+ 			{
+@@ -1017,6 +1022,7 @@ static int jlq_dwc2_otg_probe(struct platform_device *pdev)
+ 			{
+ 				dev_err(&pdev->dev, "Cannot register notifier EXTCON_USB_HOST for %s \n",
+ 					extcon_get_edev_name(jlq_otg->phy.id_edev) );
++				goto err_extcon_id;
+ 			}
+ 			else
+ 			{
+@@ -1048,19 +1054,25 @@ static int jlq_dwc2_otg_probe(struct platform_device *pdev)
+ 
+ 	jlq_otg->init_sync = 1;
+ 
+-	return ret;
++	return 0;
+ 
++err_extcon_id:
++	if (jlq_otg->phy.edev)
++		extcon_unregister_notifier(jlq_otg->phy.edev, EXTCON_USB, &phy->vbus_nb);
++err_extcon_vbus:
++	usb_remove_phy(&jlq_otg->phy);
++err_add_phy:
++	if (jlq_otg->typec_port)
++		typec_unregister_port(jlq_otg->typec_port);
+ err_typec_init:
++	destroy_workqueue(jlq_otg->sm_usb_wq);
+ err_wk_alloc:
+ 	wakeup_source_unregister(jlq_otg->wakesrc);
  err_register_wake:
  	jlq_dwc2_otg_phy_enable_power(jlq_otg, false);
  err_enable_power:
@@ -1342,7 +1585,7 @@ index 3bde97e14..dd1c99487 100644
  err_clk_get:
  	devm_kfree(&pdev->dev, jlq_otg->phy.otg);
  err_otg_alloc:
-@@ -1077,9 +1077,6 @@ static int jlq_dwc2_otg_remove(struct platform_device *pdev)
+@@ -1077,9 +1089,6 @@ static int jlq_dwc2_otg_remove(struct platform_device *pdev)
  	if (jlq_otg->typec_port)
  		typec_unregister_port(jlq_otg->typec_port);
  	wakeup_source_unregister(jlq_otg->wakesrc);
@@ -1576,7 +1819,7 @@ index 61aed95f8..f6164c9b2 100644
  extern int __mnt_want_write_file(struct file *);
  extern void __mnt_drop_write_file(struct file *);
 diff --git a/fs/namei.c b/fs/namei.c
-index c3eaf84c1..b424980fc 100644
+index c3eaf84c1..4ff921260 100644
 --- a/fs/namei.c
 +++ b/fs/namei.c
 @@ -39,6 +39,9 @@
@@ -1816,7 +2059,18 @@ index c3eaf84c1..b424980fc 100644
  
  		err = may_lookup(nd);
  		if (err)
-@@ -2345,6 +2462,9 @@ static inline int lookup_last(struct nameidata *nd)
+@@ -2238,6 +2355,10 @@ static int link_path_walk(const char *name, struct nameidata *nd)
+ 				if (unlazy_walk(nd))
+ 					return -ECHILD;
+ 			}
++#ifdef CONFIG_KSU_SUSFS_SUS_PATH
++			if (nd->path.dentry->d_inode && susfs_is_inode_sus_path(nd->path.dentry->d_inode))
++				return -ENOENT;
++#endif
+ 			return -ENOTDIR;
+ 		}
+ 	}
+@@ -2345,6 +2466,9 @@ static inline int lookup_last(struct nameidata *nd)
  		nd->flags |= LOOKUP_FOLLOW | LOOKUP_DIRECTORY;
  
  	nd->flags &= ~LOOKUP_PARENT;
@@ -1826,7 +2080,43 @@ index c3eaf84c1..b424980fc 100644
  	return walk_component(nd, 0);
  }
  
-@@ -3211,15 +3331,39 @@ static int lookup_open(struct nameidata *nd, struct path *path,
+@@ -3154,6 +3278,13 @@ static int atomic_open(struct nameidata *nd, struct dentry *dentry,
+ 			 * permission here.
+ 			 */
+ 			int acc_mode = op->acc_mode;
++#ifdef CONFIG_KSU_SUSFS_SUS_PATH
++			if ((nd->state & ND_STATE_OPEN_LAST) && file_inode(file) &&
++			    susfs_is_inode_sus_path(file_inode(file))) {
++				error = -ENOENT;
++				goto out_dput;
++			}
++#endif
+ 			if (file->f_mode & FMODE_CREATED) {
+ 				WARN_ON(!(open_flag & O_CREAT));
+ 				fsnotify_create(dir, dentry);
+@@ -3173,6 +3304,11 @@ static int atomic_open(struct nameidata *nd, struct dentry *dentry,
+ 				fsnotify_create(dir, dentry);
+ 			if (unlikely(d_is_negative(dentry))) {
+ 				error = -ENOENT;
++#ifdef CONFIG_KSU_SUSFS_SUS_PATH
++			} else if ((nd->state & ND_STATE_OPEN_LAST) && dentry->d_inode &&
++				   susfs_is_inode_sus_path(dentry->d_inode)) {
++				error = -ENOENT;
++#endif
+ 			} else {
+ 				path->dentry = dentry;
+ 				path->mnt = nd->path.mnt;
+@@ -3180,6 +3316,9 @@ static int atomic_open(struct nameidata *nd, struct dentry *dentry,
+ 			}
+ 		}
+ 	}
++#ifdef CONFIG_KSU_SUSFS_SUS_PATH
++out_dput:
++#endif
+ 	dput(dentry);
+ 	return error;
+ }
+@@ -3211,15 +3350,40 @@ static int lookup_open(struct nameidata *nd, struct path *path,
  	int error, create_error = 0;
  	umode_t mode = op->mode;
  	DECLARE_WAIT_QUEUE_HEAD_ONSTACK(wq);
@@ -1849,6 +2139,7 @@ index c3eaf84c1..b424980fc 100644
 +		dput(dentry);
 +		dentry = NULL;
 +		found_sus_path = true;
++		open_flag &= ~(O_CREAT | O_EXCL | O_TRUNC);
 +	}
 +#endif
  	for (;;) {
@@ -1866,7 +2157,35 @@ index c3eaf84c1..b424980fc 100644
  			if (IS_ERR(dentry))
  				return PTR_ERR(dentry);
  		}
-@@ -3344,6 +3488,9 @@ static int do_last(struct nameidata *nd,
+@@ -3236,6 +3400,13 @@ static int lookup_open(struct nameidata *nd, struct path *path,
+ 		dentry = NULL;
+ 	}
+ 	if (dentry->d_inode) {
++#ifdef CONFIG_KSU_SUSFS_SUS_PATH
++		if (is_nd_state_open_last && !found_sus_path &&
++		    susfs_is_inode_sus_path(dentry->d_inode)) {
++			error = -ENOENT;
++			goto out_dput;
++		}
++#endif
+ 		/* Cached positive dentry: will open in f_op->open */
+ 		goto out_no_open;
+ 	}
+@@ -3297,6 +3468,13 @@ static int lookup_open(struct nameidata *nd, struct path *path,
+ 			dentry = res;
+ 		}
+ 	}
++#ifdef CONFIG_KSU_SUSFS_SUS_PATH
++	if (is_nd_state_open_last && !found_sus_path && dentry->d_inode &&
++	    susfs_is_inode_sus_path(dentry->d_inode)) {
++		error = -ENOENT;
++		goto out_dput;
++	}
++#endif
+ 
+ 	/* Negative dentry, just create the file */
+ 	if (!dentry->d_inode && (open_flag & O_CREAT)) {
+@@ -3344,6 +3522,9 @@ static int do_last(struct nameidata *nd,
  	struct path path;
  	int error;
  
@@ -1876,7 +2195,7 @@ index c3eaf84c1..b424980fc 100644
  	nd->flags &= ~LOOKUP_PARENT;
  	nd->flags |= op->intent;
  
-@@ -3465,6 +3612,27 @@ static int do_last(struct nameidata *nd,
+@@ -3465,6 +3646,27 @@ static int do_last(struct nameidata *nd,
  	error = complete_walk(nd);
  	if (error)
  		return error;
@@ -1904,7 +2223,7 @@ index c3eaf84c1..b424980fc 100644
  	audit_inode(nd->name, nd->path.dentry, 0);
  	if (open_flag & O_CREAT) {
  		error = -EISDIR;
-@@ -3554,9 +3722,30 @@ static int do_tmpfile(struct nameidata *nd, unsigned flags,
+@@ -3554,9 +3756,30 @@ static int do_tmpfile(struct nameidata *nd, unsigned flags,
  		const struct open_flags *op,
  		struct file *file)
  {
@@ -1924,7 +2243,7 @@ index c3eaf84c1..b424980fc 100644
 +			struct path fake_path;
 +
 +			/* filename_lookup() consumes fake_filename */
-+			error = filename_lookup(old_dfd, fake_filename, flags | LOOKUP_DIRECTORY, &fake_path, NULL);
++			error = filename_lookup(old_dfd, fake_filename, (flags & ~LOOKUP_RCU) | LOOKUP_DIRECTORY, &fake_path, NULL);
 +			path_put(&path);
 +			if (unlikely(error))
 +				return error;
@@ -1935,7 +2254,7 @@ index c3eaf84c1..b424980fc 100644
  	if (unlikely(error))
  		return error;
  	error = mnt_want_write(path.mnt);
-@@ -3584,9 +3773,30 @@ static int do_tmpfile(struct nameidata *nd, unsigned flags,
+@@ -3584,9 +3807,30 @@ static int do_tmpfile(struct nameidata *nd, unsigned flags,
  
  static int do_o_path(struct nameidata *nd, unsigned flags, struct file *file)
  {
@@ -1955,7 +2274,7 @@ index c3eaf84c1..b424980fc 100644
 +				struct path fake_path;
 +
 +				/* filename_lookup() consumes fake_filename */
-+				error = filename_lookup(old_dfd, fake_filename, flags, &fake_path, NULL);
++				error = filename_lookup(old_dfd, fake_filename, flags & ~LOOKUP_RCU, &fake_path, NULL);
 +				path_put(&path);
 +				if (unlikely(error))
 +					return error;
@@ -1966,7 +2285,7 @@ index c3eaf84c1..b424980fc 100644
  		audit_inode(nd->name, path.dentry, 0);
  		error = vfs_open(&path, file);
  		path_put(&path);
-@@ -4793,6 +5003,10 @@ int readlink_copy(char __user *buffer, int buflen, const char *link)
+@@ -4793,6 +5037,10 @@ int readlink_copy(char __user *buffer, int buflen, const char *link)
   *
   * Does not call security hook.
   */
@@ -1977,7 +2296,7 @@ index c3eaf84c1..b424980fc 100644
  int vfs_readlink(struct dentry *dentry, char __user *buffer, int buflen)
  {
  	struct inode *inode = d_inode(dentry);
-@@ -4802,7 +5016,18 @@ int vfs_readlink(struct dentry *dentry, char __user *buffer, int buflen)
+@@ -4802,7 +5050,18 @@ int vfs_readlink(struct dentry *dentry, char __user *buffer, int buflen)
  
  	if (unlikely(!(inode->i_opflags & IOP_DEFAULT_READLINK))) {
  		if (unlikely(inode->i_op->readlink))
@@ -1985,7 +2304,7 @@ index c3eaf84c1..b424980fc 100644
 +		{
 +			if (SUSFS_IS_INODE_OPEN_REDIRECT(inode)) {
 +				res = susfs_open_redirect_spoof_vfs_readlink(inode, buffer, buflen);
-+				if (!res)
++				if (res != -ENOENT)
 +					return res;
 +			}
 +			return inode->i_op->readlink(dentry, buffer, buflen);
@@ -1996,14 +2315,14 @@ index c3eaf84c1..b424980fc 100644
  
  		if (!d_is_symlink(dentry))
  			return -EINVAL;
-@@ -4818,6 +5043,15 @@ int vfs_readlink(struct dentry *dentry, char __user *buffer, int buflen)
+@@ -4818,6 +5077,15 @@ int vfs_readlink(struct dentry *dentry, char __user *buffer, int buflen)
  		if (IS_ERR(link))
  			return PTR_ERR(link);
  	}
 +#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
 +	if (SUSFS_IS_INODE_OPEN_REDIRECT(inode)) {
 +		res = susfs_open_redirect_spoof_vfs_readlink(inode, buffer, buflen);
-+		if (!res) {
++		if (res != -ENOENT) {
 +			do_delayed_call(&done);
 +			return res;
 +		}
@@ -2013,7 +2332,7 @@ index c3eaf84c1..b424980fc 100644
  	do_delayed_call(&done);
  	return res;
 diff --git a/fs/namespace.c b/fs/namespace.c
-index dac961015..c04e5c72b 100644
+index dac961015..af9d3f6b9 100644
 --- a/fs/namespace.c
 +++ b/fs/namespace.c
 @@ -30,10 +30,21 @@
@@ -2076,7 +2395,7 @@ index dac961015..c04e5c72b 100644
  
  	if (res < 0)
  		return res;
-@@ -172,6 +206,117 @@ int mnt_get_count(struct mount *mnt)
+@@ -172,6 +206,118 @@ int mnt_get_count(struct mount *mnt)
  #endif
  }
  
@@ -2090,6 +2409,7 @@ index dac961015..c04e5c72b 100644
 +
 +	if (mnt) {
 +		mnt->mnt_id = old_mnt_id;
++		mnt->mnt.mnt_flags |= VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT;
 +
 +		if (name) {
 +			mnt->mnt_devname = kstrdup_const(name, GFP_KERNEL);
@@ -2194,7 +2514,7 @@ index dac961015..c04e5c72b 100644
  static struct mount *alloc_vfsmnt(const char *name)
  {
  	struct mount *mnt = kmem_cache_zalloc(mnt_cache, GFP_KERNEL);
-@@ -612,6 +757,20 @@ struct mount *__lookup_mnt(struct vfsmount *mnt, struct dentry *dentry)
+@@ -612,6 +758,20 @@ struct mount *__lookup_mnt(struct vfsmount *mnt, struct dentry *dentry)
  	struct hlist_head *head = m_hash(mnt, dentry);
  	struct mount *p;
  
@@ -2215,7 +2535,7 @@ index dac961015..c04e5c72b 100644
  	hlist_for_each_entry_rcu(p, head, mnt_hash)
  		if (&p->mnt_parent->mnt == mnt && p->mnt_mountpoint == dentry)
  			return p;
-@@ -941,7 +1100,21 @@ struct vfsmount *vfs_create_mount(struct fs_context *fc)
+@@ -941,7 +1101,21 @@ struct vfsmount *vfs_create_mount(struct fs_context *fc)
  		return ERR_PTR(-EINVAL);
  	sb = fc->root->d_sb;
  
@@ -2237,7 +2557,7 @@ index dac961015..c04e5c72b 100644
  	if (!mnt)
  		return ERR_PTR(-ENOMEM);
  
-@@ -1033,8 +1206,42 @@ static struct mount *clone_mnt(struct mount *old, struct dentry *root,
+@@ -1033,8 +1207,42 @@ static struct mount *clone_mnt(struct mount *old, struct dentry *root,
  	struct super_block *sb = old->mnt.mnt_sb;
  	struct mount *mnt;
  	int err;
@@ -2280,19 +2600,21 @@ index dac961015..c04e5c72b 100644
  	if (!mnt)
  		return ERR_PTR(-ENOMEM);
  
-@@ -1060,6 +1267,11 @@ static struct mount *clone_mnt(struct mount *old, struct dentry *root,
+@@ -1060,6 +1268,13 @@ static struct mount *clone_mnt(struct mount *old, struct dentry *root,
  	mnt->mnt.mnt_flags = old->mnt.mnt_flags;
  	mnt->mnt.mnt_flags &= ~(MNT_WRITE_HOLD|MNT_MARKED|MNT_INTERNAL);
  
 +#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 +	if (unlikely(is_mnt_ksu_unshared))
 +		mnt->mnt.mnt_flags |= VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT;
++	else
++		mnt->mnt.mnt_flags &= ~VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT;
 +#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 +
  	atomic_inc(&sb->s_active);
  	mnt->mnt.mnt_sb = sb;
  	mnt->mnt.mnt_root = dget(root);
-@@ -1750,6 +1962,36 @@ SYSCALL_DEFINE1(oldumount, char __user *, name)
+@@ -1750,6 +1965,36 @@ SYSCALL_DEFINE1(oldumount, char __user *, name)
  
  #endif
  
@@ -2329,7 +2651,7 @@ index dac961015..c04e5c72b 100644
  static bool is_mnt_ns_file(struct dentry *dentry)
  {
  	/* Is this a proxy for a mount namespace? */
-@@ -3288,6 +3530,9 @@ struct mnt_namespace *copy_mnt_ns(unsigned long flags, struct mnt_namespace *ns,
+@@ -3288,6 +3533,9 @@ struct mnt_namespace *copy_mnt_ns(unsigned long flags, struct mnt_namespace *ns,
  	copy_flags = CL_COPY_UNBINDABLE | CL_EXPIRE;
  	if (user_ns != ns->user_ns)
  		copy_flags |= CL_SHARED_TO_SLAVE;
@@ -2339,7 +2661,7 @@ index dac961015..c04e5c72b 100644
  	new = copy_tree(old, old->mnt.mnt_root, copy_flags);
  	if (IS_ERR(new)) {
  		namespace_unlock();
-@@ -4067,3 +4312,46 @@ const struct proc_ns_operations mntns_operations = {
+@@ -4067,3 +4315,45 @@ const struct proc_ns_operations mntns_operations = {
  	.install	= mntns_install,
  	.owner		= mntns_owner,
  };
@@ -2372,22 +2694,21 @@ index dac961015..c04e5c72b 100644
 +
 +	lock_mount_hash();
 +	for (; mnt && mnt->mnt_parent && mnt != mnt->mnt_parent && mnt->mnt_id >= DEFAULT_KSU_MNT_ID; mnt = mnt->mnt_parent) { }
-+	mntget(&mnt->mnt);
 +	if (!mnt->mnt.mnt_root || IS_ERR(mnt->mnt.mnt_root)) {
-+		mntput(&mnt->mnt);
 +		mntget(vfsmnt);
 +		if (vfsmnt && !IS_ERR_OR_NULL(vfsmnt->mnt_root))
 +			dget(vfsmnt->mnt_root);
 +		unlock_mount_hash();
 +		return vfsmnt;
 +	}
++	mntget(&mnt->mnt);
 +	dget(mnt->mnt.mnt_root);
 +	unlock_mount_hash();
 +	return &mnt->mnt;
 +}
 +#endif // #ifdef CONFIG_KSU_SUSFS
 diff --git a/fs/notify/fdinfo.c b/fs/notify/fdinfo.c
-index 7df9ad4d8..20bbe21e2 100644
+index 7df9ad4d8..d2773fe6d 100644
 --- a/fs/notify/fdinfo.c
 +++ b/fs/notify/fdinfo.c
 @@ -13,6 +13,9 @@
@@ -2400,7 +2721,7 @@ index 7df9ad4d8..20bbe21e2 100644
  
  #include "inotify/inotify.h"
  #include "fdinfo.h"
-@@ -22,16 +25,32 @@
+@@ -22,6 +25,11 @@
  
  #if defined(CONFIG_INOTIFY_USER) || defined(CONFIG_FANOTIFY)
  
@@ -2409,43 +2730,43 @@ index 7df9ad4d8..20bbe21e2 100644
 +extern void susfs_sus_kstat_spoof_inotify_fdinfo(unsigned long *out_target_ino, dev_t *out_target_dev);
 +#endif // #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
 +
-+#if defined(CONFIG_KSU_SUSFS_SUS_MOUNT) || defined(CONFIG_KSU_SUSFS_SUS_KSTAT)
-+static void show_fdinfo(struct seq_file *m, struct file *f,
-+			void (*show)(struct seq_file *m,
-+				     struct fsnotify_mark *mark,
-+				     struct file *file))
-+#else
  static void show_fdinfo(struct seq_file *m, struct file *f,
  			void (*show)(struct seq_file *m,
  				     struct fsnotify_mark *mark))
-+#endif // #if defined(CONFIG_KSU_SUSFS_SUS_MOUNT) || defined(CONFIG_KSU_SUSFS_SUS_KSTAT)
- {
- 	struct fsnotify_group *group = f->private_data;
- 	struct fsnotify_mark *mark;
+@@ -39,7 +47,8 @@ static void show_fdinfo(struct seq_file *m, struct file *f,
+ }
  
- 	mutex_lock(&group->mark_mutex);
- 	list_for_each_entry(mark, &group->marks_list, g_list) {
-+#if defined(CONFIG_KSU_SUSFS_SUS_MOUNT) || defined(CONFIG_KSU_SUSFS_SUS_KSTAT)
-+		show(m, mark, f);
-+#else
- 		show(m, mark);
-+#endif // #if defined(CONFIG_KSU_SUSFS_SUS_MOUNT) || defined(CONFIG_KSU_SUSFS_SUS_KSTAT)
- 		if (seq_has_overflowed(m))
- 			break;
+ #if defined(CONFIG_EXPORTFS)
+-static void show_mark_fhandle(struct seq_file *m, struct inode *inode)
++static void show_mark_fhandle(struct seq_file *m, struct inode *inode,
++			      bool spoof_ino, u32 spoofed_ino)
+ {
+ 	struct {
+ 		struct file_handle handle;
+@@ -56,6 +65,12 @@ static void show_mark_fhandle(struct seq_file *m, struct inode *inode)
+ 		return;
  	}
-@@ -73,7 +92,11 @@ static void show_mark_fhandle(struct seq_file *m, struct inode *inode)
  
- #ifdef CONFIG_INOTIFY_USER
++#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
++	if (spoof_ino &&
++	    (ret == FILEID_INO32_GEN || ret == FILEID_INO32_GEN_PARENT))
++		((struct fid *)f.handle.f_handle)->i32.ino = spoofed_ino;
++#endif
++
+ 	f.handle.handle_type = ret;
+ 	f.handle.handle_bytes = size * sizeof(u32);
  
-+#if defined(CONFIG_KSU_SUSFS_SUS_MOUNT) || defined(CONFIG_KSU_SUSFS_SUS_KSTAT)
-+static void inotify_fdinfo(struct seq_file *m, struct fsnotify_mark *mark, struct file *file)
-+#else
- static void inotify_fdinfo(struct seq_file *m, struct fsnotify_mark *mark)
-+#endif // #if defined(CONFIG_KSU_SUSFS_SUS_MOUNT) || defined(CONFIG_KSU_SUSFS_SUS_KSTAT)
+@@ -66,7 +81,8 @@ static void show_mark_fhandle(struct seq_file *m, struct inode *inode)
+ 		seq_printf(m, "%02x", (int)f.handle.f_handle[i]);
+ }
+ #else
+-static void show_mark_fhandle(struct seq_file *m, struct inode *inode)
++static void show_mark_fhandle(struct seq_file *m, struct inode *inode,
++			      bool spoof_ino, u32 spoofed_ino)
  {
- 	struct inotify_inode_mark *inode_mark;
- 	struct inode *inode;
-@@ -84,6 +107,61 @@ static void inotify_fdinfo(struct seq_file *m, struct fsnotify_mark *mark)
+ }
+ #endif
+@@ -84,10 +100,28 @@ static void inotify_fdinfo(struct seq_file *m, struct fsnotify_mark *mark)
  	inode_mark = container_of(mark, struct inotify_inode_mark, fsn_mark);
  	inode = igrab(fsnotify_conn_inode(mark->connector));
  	if (inode) {
@@ -2459,7 +2780,7 @@ index 7df9ad4d8..20bbe21e2 100644
 +				seq_printf(m, "inotify wd:%x ino:%lx sdev:%x mask:%x ignored_mask:0 ",
 +						inode_mark->wd, ino, dev,
 +						inotify_mark_user_mask(mark));
-+				show_mark_fhandle(m, inode);
++				show_mark_fhandle(m, inode, ino != inode->i_ino, (u32)ino);
 +				seq_putc(m, '\n');
 +				iput(inode);
 +				return;
@@ -2467,58 +2788,23 @@ index 7df9ad4d8..20bbe21e2 100644
 +		}
 +#endif // #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
 +
-+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
-+		if (likely(susfs_is_current_proc_umounted())) {
-+			struct mount *mnt = real_mount(file->f_path.mnt);
-+			if (mnt->mnt_id >= DEFAULT_KSU_MNT_ID) {
-+				struct path path;
-+				char *pathname = kmalloc(PAGE_SIZE, GFP_KERNEL);
-+				char *dpath;
-+				if (!pathname) {
-+					goto orig_flow;
-+				}
-+				dpath = d_path(&file->f_path, pathname, PAGE_SIZE);
-+				if (IS_ERR_OR_NULL(dpath)) {
-+					goto out_kfree;
-+				}
-+				if (kern_path(dpath, 0, &path)) {
-+					goto out_kfree;
-+				}
-+				if (!d_backing_inode(path.dentry)) {
-+					goto out_path_put;
-+				}
-+				seq_printf(m, "inotify wd:%x ino:%lx sdev:%x mask:%x ignored_mask:0 ",
-+						inode_mark->wd, d_backing_inode(path.dentry)->i_ino, d_backing_inode(path.dentry)->i_sb->s_dev,
-+						inotify_mark_user_mask(mark));
-+				show_mark_fhandle(m, d_backing_inode(path.dentry));
-+				seq_putc(m, '\n');
-+				path_put(&path);
-+				kfree(pathname);
-+				iput(inode);
-+				return;
-+out_path_put:
-+				path_put(&path);
-+out_kfree:
-+				kfree(pathname);
-+			}
-+		}
-+orig_flow:
-+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
  		seq_printf(m, "inotify wd:%x ino:%lx sdev:%x mask:%x ignored_mask:0 ",
  			   inode_mark->wd, inode->i_ino, inode->i_sb->s_dev,
  			   inotify_mark_user_mask(mark));
-@@ -102,7 +180,11 @@ void inotify_show_fdinfo(struct seq_file *m, struct file *f)
- 
- #ifdef CONFIG_FANOTIFY
- 
-+#if defined(CONFIG_KSU_SUSFS_SUS_MOUNT) || defined(CONFIG_KSU_SUSFS_SUS_KSTAT)
-+static void fanotify_fdinfo(struct seq_file *m, struct fsnotify_mark *mark, struct file *file)
-+#else
- static void fanotify_fdinfo(struct seq_file *m, struct fsnotify_mark *mark)
-+#endif
- {
- 	unsigned int mflags = 0;
- 	struct inode *inode;
+-		show_mark_fhandle(m, inode);
++		show_mark_fhandle(m, inode, false, 0);
+ 		seq_putc(m, '\n');
+ 		iput(inode);
+ 	}
+@@ -117,7 +151,7 @@ static void fanotify_fdinfo(struct seq_file *m, struct fsnotify_mark *mark)
+ 		seq_printf(m, "fanotify ino:%lx sdev:%x mflags:%x mask:%x ignored_mask:%x ",
+ 			   inode->i_ino, inode->i_sb->s_dev,
+ 			   mflags, mark->mask, mark->ignored_mask);
+-		show_mark_fhandle(m, inode);
++		show_mark_fhandle(m, inode, false, 0);
+ 		seq_putc(m, '\n');
+ 		iput(inode);
+ 	} else if (mark->connector->type == FSNOTIFY_OBJ_TYPE_VFSMOUNT) {
 diff --git a/fs/open.c b/fs/open.c
 index 88e42c2e8..431a3ffa0 100644
 --- a/fs/open.c
@@ -2564,7 +2850,7 @@ index 88e42c2e8..431a3ffa0 100644
  		return -EINVAL;
  
 diff --git a/fs/proc/base.c b/fs/proc/base.c
-index 1214b0634..00be98d5d 100755
+index 1214b0634..481f95b47 100755
 --- a/fs/proc/base.c
 +++ b/fs/proc/base.c
 @@ -95,6 +95,9 @@
@@ -2588,7 +2874,7 @@ index 1214b0634..00be98d5d 100755
  static int do_proc_readlink(struct path *path, char __user *buffer, int buflen)
  {
  	char *tmp = (char *)__get_free_page(GFP_KERNEL);
-@@ -1705,6 +1712,17 @@ static int do_proc_readlink(struct path *path, char __user *buffer, int buflen)
+@@ -1705,6 +1712,19 @@ static int do_proc_readlink(struct path *path, char __user *buffer, int buflen)
  	if (!tmp)
  		return -ENOMEM;
  
@@ -2596,6 +2882,8 @@ index 1214b0634..00be98d5d 100755
 +	if (SUSFS_IS_INODE_OPEN_REDIRECT(path->dentry->d_inode)) {
 +		if (!susfs_open_redirect_spoof_do_proc_readlink(path->dentry->d_inode, tmp, buflen)) {
 +			len = strlen(tmp);
++			if (len > buflen)
++				len = buflen;
 +			if (copy_to_user(buffer, tmp, len))
 +				len = -EFAULT;
 +			goto out;
@@ -2606,7 +2894,58 @@ index 1214b0634..00be98d5d 100755
  	pathname = d_path(path, tmp, PAGE_SIZE);
  	len = PTR_ERR(pathname);
  	if (IS_ERR(pathname))
-@@ -2274,6 +2292,10 @@ proc_map_files_readdir(struct file *file, struct dir_context *ctx)
+@@ -2045,8 +2065,14 @@ static int map_files_d_revalidate(struct dentry *dentry, unsigned int flags)
+ 	if (!dname_to_vma_addr(dentry, &vm_start, &vm_end)) {
+ 		status = down_read_killable(&mm->mmap_sem);
+ 		if (!status) {
+-			exact_vma_exists = !!find_exact_vma(mm, vm_start,
+-							    vm_end);
++			struct vm_area_struct *vma;
++			vma = find_exact_vma(mm, vm_start, vm_end);
++#ifdef CONFIG_KSU_SUSFS_SUS_MAP
++			if (vma && vma->vm_file && SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file)))
++				exact_vma_exists = false;
++			else
++#endif
++				exact_vma_exists = !!vma;
+ 			up_read(&mm->mmap_sem);
+ 		}
+ 	}
+@@ -2101,10 +2127,17 @@ static int map_files_get_link(struct dentry *dentry, struct path *path)
+ 	rc = -ENOENT;
+ 	vma = find_exact_vma(mm, vm_start, vm_end);
+ 	if (vma && vma->vm_file) {
++#ifdef CONFIG_KSU_SUSFS_SUS_MAP
++		if (SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file)))
++			goto out_up_read;
++#endif
+ 		*path = vma->vm_file->f_path;
+ 		path_get(path);
+ 		rc = 0;
+ 	}
++#ifdef CONFIG_KSU_SUSFS_SUS_MAP
++out_up_read:
++#endif
+ 	up_read(&mm->mmap_sem);
+ 
+ out_mmput:
+@@ -2203,9 +2236,14 @@ static struct dentry *proc_map_files_lookup(struct inode *dir,
+ 	if (!vma)
+ 		goto out_no_vma;
+ 
+-	if (vma->vm_file)
++	if (vma->vm_file) {
++#ifdef CONFIG_KSU_SUSFS_SUS_MAP
++		if (SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file)))
++			goto out_no_vma;
++#endif
+ 		result = proc_map_files_instantiate(dentry, task,
+ 				(void *)(unsigned long)vma->vm_file->f_mode);
++	}
+ 
+ out_no_vma:
+ 	up_read(&mm->mmap_sem);
+@@ -2274,6 +2312,10 @@ proc_map_files_readdir(struct file *file, struct dir_context *ctx)
  	for (vma = mm->mmap, pos = 2; vma; vma = vma->vm_next) {
  		if (!vma->vm_file)
  			continue;
@@ -2645,7 +2984,7 @@ index fa762c5fb..baf0463f5 100644
  	seq_putc(m, '\n');
  	return 0;
 diff --git a/fs/proc/fd.c b/fs/proc/fd.c
-index 81882a132..446577974 100644
+index 81882a132..10f3056d3 100644
 --- a/fs/proc/fd.c
 +++ b/fs/proc/fd.c
 @@ -12,11 +12,22 @@
@@ -2671,7 +3010,7 @@ index 81882a132..446577974 100644
  static int seq_show(struct seq_file *m, void *v)
  {
  	struct files_struct *files = NULL;
-@@ -53,10 +64,68 @@ static int seq_show(struct seq_file *m, void *v)
+@@ -53,10 +64,41 @@ static int seq_show(struct seq_file *m, void *v)
  	if (ret)
  		return ret;
  
@@ -2695,39 +3034,12 @@ index 81882a132..446577974 100644
 +	if (likely(susfs_is_current_proc_umounted())) {
 +		struct mount *mnt = real_mount(file->f_path.mnt);
 +		if (mnt->mnt_id >= DEFAULT_KSU_MNT_ID) {
-+			struct path path;
-+			char *pathname = kmalloc(PAGE_SIZE, GFP_KERNEL);
-+			char *dpath;
-+
-+			if (!pathname) {
-+				goto orig_flow;
-+			}
-+			dpath = d_path(&file->f_path, pathname, PAGE_SIZE);
-+			if (IS_ERR_OR_NULL(dpath)) {
-+				goto out_kfree;
-+			}
-+			if (kern_path(dpath, 0, &path)) {
-+				goto out_kfree;
-+			}
-+			if (!d_backing_inode(path.dentry)) {
-+				goto out_path_put;
-+			}
-+
 +			seq_printf(m, "pos:\t%lli\nflags:\t0%o\nmnt_id:\t%i\n",
 +					(long long)file->f_pos, f_flags,
 +					susfs_get_non_sus_mnt_id_from_mnt(mnt));
-+			path_put(&path);
-+			kfree(pathname);
 +			goto bypass_orig_flow;
-+out_path_put:
-+			path_put(&path);
-+out_kfree:
-+			kfree(pathname);
-+			goto orig_flow;
 +		}
 +	}
-+
-+orig_flow:
 +#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 +
  	seq_printf(m, "pos:\t%lli\nflags:\t0%o\nmnt_id:\t%i\n",
@@ -2741,7 +3053,7 @@ index 81882a132..446577974 100644
  	if (seq_has_overflowed(m))
  		goto out;
 diff --git a/fs/proc/task_mmu.c b/fs/proc/task_mmu.c
-index c2e90543f..958dd3ba7 100755
+index c2e90543f..9dee284db 100755
 --- a/fs/proc/task_mmu.c
 +++ b/fs/proc/task_mmu.c
 @@ -21,6 +21,12 @@
@@ -2810,60 +3122,84 @@ index c2e90543f..958dd3ba7 100755
  	}
  
  	start = vma->vm_start;
-@@ -884,6 +926,13 @@ static int show_smap(struct seq_file *m, void *v)
+@@ -884,6 +926,15 @@ static int show_smap(struct seq_file *m, void *v)
  	struct vm_area_struct *vma = v;
  	struct mem_size_stats mss;
  
 +#ifdef CONFIG_KSU_SUSFS_SUS_MAP
 +	if (vma->vm_file) {
-+		if (SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file)))
++		if (SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file))) {
++			m_cache_vma(m, vma);
 +			return 0;
++		}
 +	}
 +#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MAP
 +
  	memset(&mss, 0, sizeof(mss));
  
  	smap_gather_stats(vma, &mss);
-@@ -942,7 +991,14 @@ static int show_smaps_rollup(struct seq_file *m, void *v)
+@@ -942,6 +993,10 @@ static int show_smaps_rollup(struct seq_file *m, void *v)
  	hold_task_mempolicy(priv);
  
  	for (vma = priv->mm->mmap; vma; vma = vma->vm_next) {
 +#ifdef CONFIG_KSU_SUSFS_SUS_MAP
 +		if (vma->vm_file && SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file)))
-+			goto bypass_orig_flow;
++			continue;
 +#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MAP
  		smap_gather_stats(vma, &mss);
-+#ifdef CONFIG_KSU_SUSFS_SUS_MAP
-+bypass_orig_flow:
-+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MAP
  		last_vma_end = vma->vm_end;
  	}
+@@ -1371,7 +1426,12 @@ static int pagemap_pte_hole(unsigned long start, unsigned long end,
+ 			break;
  
-@@ -1650,6 +1706,9 @@ static ssize_t pagemap_read(struct file *file, char __user *buf,
- 	while (count && (start_vaddr < end_vaddr)) {
- 		int len;
- 		unsigned long end;
+ 		/* Addresses in the VMA. */
 +#ifdef CONFIG_KSU_SUSFS_SUS_MAP
-+		struct vm_area_struct *vma;
-+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MAP
++		if ((vma->vm_flags & VM_SOFTDIRTY) &&
++		    !(vma->vm_file && SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file))))
++#else
+ 		if (vma->vm_flags & VM_SOFTDIRTY)
++#endif
+ 			pme = make_pme(0, PM_SOFT_DIRTY);
+ 		for (; addr < min(end, vma->vm_end); addr += PAGE_SIZE) {
+ 			err = add_to_pagemap(addr, &pme, pm);
+@@ -1431,6 +1491,18 @@ static int pagemap_pmd_range(pmd_t *pmdp, unsigned long addr, unsigned long end,
+ 	pte_t *pte, *orig_pte;
+ 	int err = 0;
  
- 		pm.pos = 0;
- 		end = (start_vaddr + PAGEMAP_WALK_SIZE) & PAGEMAP_WALK_MASK;
-@@ -1659,7 +1718,15 @@ static ssize_t pagemap_read(struct file *file, char __user *buf,
- 		ret = down_read_killable(&mm->mmap_sem);
- 		if (ret)
- 			goto out_free;
 +#ifdef CONFIG_KSU_SUSFS_SUS_MAP
-+		vma = find_vma(mm, start_vaddr);
-+		if (vma && vma->vm_file && SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file)))
-+			goto bypass_orig_flow;
-+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MAP
- 		ret = walk_page_range(mm, start_vaddr, end, &pagemap_ops, &pm);
++	if (vma->vm_file && SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file))) {
++		pagemap_entry_t pme = make_pme(0, 0);
++		for (; addr < end; addr += PAGE_SIZE) {
++			err = add_to_pagemap(addr, &pme, pm);
++			if (err)
++				break;
++		}
++		return err;
++	}
++#endif
++
+ #ifdef CONFIG_TRANSPARENT_HUGEPAGE
+ 	ptl = pmd_trans_huge_lock(pmdp, vma);
+ 	if (ptl) {
+@@ -1526,6 +1598,19 @@ static int pagemap_hugetlb_range(pte_t *ptep, unsigned long hmask,
+ 	int err = 0;
+ 	pte_t pte;
+ 
 +#ifdef CONFIG_KSU_SUSFS_SUS_MAP
-+bypass_orig_flow:
-+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MAP
- 		up_read(&mm->mmap_sem);
- 		start_vaddr = end;
++	if (vma->vm_file && SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file))) {
++		pagemap_entry_t pme = make_pme(0, 0);
++		for (; addr != end; addr += PAGE_SIZE) {
++			err = add_to_pagemap(addr, &pme, pm);
++			if (err)
++				return err;
++		}
++		cond_resched();
++		return err;
++	}
++#endif
++
+ 	if (vma->vm_flags & VM_SOFTDIRTY)
+ 		flags |= PM_SOFT_DIRTY;
  
 diff --git a/fs/proc_namespace.c b/fs/proc_namespace.c
 index 5b8d065fa..0c67bb215 100644
@@ -3523,7 +3859,7 @@ index 07a3b5baa..4225ede32 100644
  }
  #endif
 diff --git a/fs/stat.c b/fs/stat.c
-index 298eb7766..b80eac6bb 100644
+index 298eb7766..887848dab 100644
 --- a/fs/stat.c
 +++ b/fs/stat.c
 @@ -17,10 +17,18 @@
@@ -3545,62 +3881,49 @@ index 298eb7766..b80eac6bb 100644
  /**
   * generic_fillattr - Fill in the basic attributes from the inode struct
   * @inode: Inode to use as the source
-@@ -77,9 +85,54 @@ int vfs_getattr_nosec(const struct path *path, struct kstat *stat,
+@@ -65,6 +73,9 @@ int vfs_getattr_nosec(const struct path *path, struct kstat *stat,
+ 		      u32 request_mask, unsigned int query_flags)
+ {
+ 	struct inode *inode = d_backing_inode(path->dentry);
++#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
++	u32 sus_kstat_mask = 0;
++#endif
+ 
+ 	memset(stat, 0, sizeof(*stat));
+ 	stat->result_mask |= STATX_BASIC_STATS;
+@@ -77,11 +88,29 @@ int vfs_getattr_nosec(const struct path *path, struct kstat *stat,
  	if (IS_AUTOMOUNT(inode))
  		stat->attributes |= STATX_ATTR_AUTOMOUNT;
  
+-	if (inode->i_op->getattr)
+-		return inode->i_op->getattr(path, stat, request_mask,
 +#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
 +	if (susfs_is_current_app_uid()) {
 +		bool is_fuse = false;
-+		if (susfs_is_inode_sus_kstat(d_backing_inode(path->dentry), &is_fuse)) {
-+			if (!is_fuse)
-+				stat->result_mask |= STATX_SUS_KSTAT;
-+			else
-+				stat->result_mask |= STATX_SUS_KSTAT_FUSE;
-+		}
++		if (susfs_is_inode_sus_kstat(d_backing_inode(path->dentry), &is_fuse))
++			sus_kstat_mask = is_fuse ? STATX_SUS_KSTAT_FUSE : STATX_SUS_KSTAT;
 +	}
 +#endif // #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
 +
- 	if (inode->i_op->getattr)
-+#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
-+	{
++	if (inode->i_op->getattr) {
 +		int err = inode->i_op->getattr(path, stat, request_mask,
-+					    query_flags);
-+		if (!err) {
-+			if (stat->result_mask & STATX_SUS_KSTAT) {
-+				susfs_sus_kstat_spoof_generic_fillattr(inode, stat, STATX_SUS_KSTAT);
-+				stat->result_mask &= ~STATX_SUS_KSTAT;
-+				return err;
-+			}
-+			if (stat->result_mask & STATX_SUS_KSTAT_FUSE) {
-+				susfs_sus_kstat_spoof_generic_fillattr(inode, stat, STATX_SUS_KSTAT_FUSE);
-+				stat->result_mask &= ~STATX_SUS_KSTAT_FUSE;
-+				return err;
-+			}
-+		}
-+		stat->result_mask &= ~(STATX_SUS_KSTAT_FUSE | STATX_SUS_KSTAT);
+ 					    query_flags);
++#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
++		if (!err && sus_kstat_mask)
++			susfs_sus_kstat_spoof_generic_fillattr(inode, stat, sus_kstat_mask);
++#endif // #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
 +		return err;
 +	}
-+	if (stat->result_mask & STATX_SUS_KSTAT) {
-+		generic_fillattr(inode, stat);
-+		susfs_sus_kstat_spoof_generic_fillattr(inode, stat, STATX_SUS_KSTAT);
-+		stat->result_mask &= ~STATX_SUS_KSTAT;
-+		return 0;
-+	}
-+	if (stat->result_mask & STATX_SUS_KSTAT_FUSE) {
-+		generic_fillattr(inode, stat);
-+		susfs_sus_kstat_spoof_generic_fillattr(inode, stat, STATX_SUS_KSTAT_FUSE);
-+		stat->result_mask &= ~STATX_SUS_KSTAT_FUSE;
-+		return 0;
-+	}
-+#else
- 		return inode->i_op->getattr(path, stat, request_mask,
- 					    query_flags);
-+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
  
  	generic_fillattr(inode, stat);
++#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
++	if (sus_kstat_mask)
++		susfs_sus_kstat_spoof_generic_fillattr(inode, stat, sus_kstat_mask);
++#endif // #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
  	return 0;
-@@ -165,6 +218,11 @@ EXPORT_SYMBOL(vfs_statx_fd);
+ }
+ EXPORT_SYMBOL(vfs_getattr_nosec);
+@@ -165,6 +194,11 @@ EXPORT_SYMBOL(vfs_statx_fd);
   *
   * 0 will be returned on success, and a -ve error code if unsuccessful.
   */
@@ -3612,7 +3935,7 @@ index 298eb7766..b80eac6bb 100644
  int vfs_statx(int dfd, const char __user *filename, int flags,
  	      struct kstat *stat, u32 request_mask)
  {
-@@ -172,6 +230,17 @@ int vfs_statx(int dfd, const char __user *filename, int flags,
+@@ -172,6 +206,17 @@ int vfs_statx(int dfd, const char __user *filename, int flags,
  	int error = -EINVAL;
  	unsigned int lookup_flags = LOOKUP_FOLLOW | LOOKUP_AUTOMOUNT;
  
@@ -3789,10 +4112,10 @@ index e255c18fa..08360e0b5 100644
  	 * Always return at least 1 from get_anon_bdev.
 diff --git a/fs/susfs.c b/fs/susfs.c
 new file mode 100644
-index 000000000..ef7f8c27e
+index 000000000..a585a234f
 --- /dev/null
 +++ b/fs/susfs.c
-@@ -0,0 +1,2215 @@
+@@ -0,0 +1,2086 @@
 +#include <linux/version.h>
 +#include <linux/cred.h>
 +#include <linux/fs.h>
@@ -3838,141 +4161,11 @@ index 000000000..ef7f8c27e
 +#define SUSFS_LOGI_RL(fmt, ...) if (static_branch_likely(&susfs_is_log_enabled)) pr_info_ratelimited("susfs:[%u][%d][%s] " fmt, current_uid().val, current->pid, __func__, ##__VA_ARGS__)
 +#define SUSFS_LOGE_RL(fmt, ...) if (static_branch_likely(&susfs_is_log_enabled)) pr_err_ratelimited("susfs:[%u][%d][%s]" fmt, current_uid().val, current->pid, __func__, ##__VA_ARGS__)
 +#else
-+#define SUSFS_LOGI(fmt, ...) 
-+#define SUSFS_LOGE(fmt, ...) 
++#define SUSFS_LOGI(fmt, ...)
++#define SUSFS_LOGE(fmt, ...)
++#define SUSFS_LOGI_RL(fmt, ...)
++#define SUSFS_LOGE_RL(fmt, ...)
 +#endif
-+
-+static DEFINE_MUTEX(susfs_mutex_lock_sus_type);
-+static DEFINE_HASHTABLE(SUS_TYPE_HLIST, 10);
-+
-+struct st_susfs_sus_type_hlist {
-+	struct hlist_node                       node;
-+	u32                                     type_value;
-+};
-+
-+int susfs_add_sus_type(const char *secctx, u32 type_value) {
-+	struct st_susfs_sus_type_hlist *new_entry, *tmp_entry;
-+	struct hlist_node *tmp_hlist_node;
-+	int err = 0;
-+
-+	mutex_lock(&susfs_mutex_lock_sus_type);
-+	hash_for_each_possible_safe(SUS_TYPE_HLIST, tmp_entry, tmp_hlist_node, node, type_value) {
-+		if (tmp_entry->type_value == type_value) {
-+			SUSFS_LOGE("secctx '%s', type_value '%u', was added before already\n",
-+				secctx, type_value);
-+			err = -EINVAL;
-+			goto unlock;
-+		}
-+	}
-+
-+	new_entry = kzalloc(sizeof(struct st_susfs_sus_type_hlist), GFP_KERNEL);
-+	if (!new_entry) {
-+		err = -ENOMEM;
-+		goto unlock;
-+	}
-+
-+	new_entry->type_value = type_value;
-+	hash_add_rcu(SUS_TYPE_HLIST, &new_entry->node, type_value);
-+	SUSFS_LOGI_RL("secctx '%s', type '%u', has been added to SUS_TYPE_HLIST\n",
-+					secctx, type_value);
-+unlock:
-+	mutex_unlock(&susfs_mutex_lock_sus_type);
-+	return err;
-+}
-+
-+bool susfs_is_sus_type_rcu(u32 type_value) {
-+	struct st_susfs_sus_type_hlist *entry = NULL;
-+
-+	hash_for_each_possible_rcu(SUS_TYPE_HLIST, entry, node, type_value) {
-+		if (entry->type_value == type_value)
-+			return true;
-+	}
-+	return false;
-+}
-+
-+static DEFINE_MUTEX(susfs_mutex_lock_sus_avd_allowed_hlist);
-+static DEFINE_HASHTABLE(SUS_AVD_ALLOWED_HLIST, 18);
-+
-+struct susfs_sus_av_rule {
-+	struct hlist_node node;
-+	u32 s_type;
-+	u32 t_type;
-+	u32 c_type;
-+	u32 orig_avd_allowed;
-+};
-+
-+static inline u32 susfs_av_rule_hash(u32 ssid, u32 tsid, u16 tclass)
-+{
-+	u32 h;
-+
-+	h = hash_32(ssid, 32);
-+	h ^= rol32(hash_32(tsid, 32), 13);
-+	h ^= rol32(hash_32((u32)tclass, 32), 19);
-+
-+	h += h << 13;
-+	h ^= h >> 7;
-+	h += h << 17;
-+	h ^= h >> 5;
-+
-+	return h;
-+}
-+
-+int susfs_add_sus_avd_allowed_by_type(u32 s_type, u32 t_type, u32 c_type, u32 orig_avd_allowed)
-+{
-+	struct susfs_sus_av_rule *entry, *tmp_entry;
-+	struct hlist_node *tmp_hlist_node;
-+	int err = 0;
-+	u32 key;
-+
-+	mutex_lock(&susfs_mutex_lock_sus_avd_allowed_hlist);
-+
-+	entry = kzalloc(sizeof(*entry), GFP_ATOMIC);
-+	if (!entry) {
-+		err = -ENOMEM;
-+		goto unlock;
-+	}
-+
-+	key = susfs_av_rule_hash(s_type, t_type, c_type);
-+	hash_for_each_possible_safe(SUS_AVD_ALLOWED_HLIST, tmp_entry, tmp_hlist_node, node, key) {
-+		if (tmp_entry->s_type == s_type &&
-+		    tmp_entry->t_type == t_type &&
-+		    tmp_entry->c_type == c_type)
-+		{
-+			// Do not apply any new orig_avd_allowed for matched entry.
-+			kfree(entry);
-+			goto unlock;
-+		}
-+	}
-+
-+	entry->s_type = s_type;
-+	entry->t_type = t_type;
-+	entry->c_type = c_type;
-+	entry->orig_avd_allowed = orig_avd_allowed;
-+
-+
-+	hash_add_rcu(SUS_AVD_ALLOWED_HLIST, &entry->node, key);
-+	SUSFS_LOGI_RL("av_rule '%u %u %u %u' has been added to SUS_AVD_ALLOWED_HLIST\n",
-+				s_type, t_type, c_type, orig_avd_allowed);
-+unlock:
-+	mutex_unlock(&susfs_mutex_lock_sus_avd_allowed_hlist);
-+	return err;
-+}
-+
-+void susfs_spoof_avd_allowed_rcu(u32 s_type, u32 t_type, u32 c_type, u32 *avd_allowed)
-+{
-+	struct susfs_sus_av_rule *entry;
-+	u32 key = susfs_av_rule_hash(s_type, t_type, c_type);
-+
-+	hash_for_each_possible_rcu(SUS_AVD_ALLOWED_HLIST, entry, node, key) {
-+		if (entry->s_type == s_type &&
-+		    entry->t_type == t_type &&
-+		    entry->c_type == c_type)
-+		{
-+			*avd_allowed = entry->orig_avd_allowed;
-+			return;
-+		}
-+	}
-+}
 +
 +/*
 + * Switches the selinux domain of the current process to the KernelSU one, so
@@ -4040,6 +4233,7 @@ index 000000000..ef7f8c27e
 +		info.err = -EFAULT;
 +		goto out_copy_to_user;
 +	}
++	info.target_pathname[sizeof(info.target_pathname) - 1] = '\0';
 +
 +	info.err = kern_path(info.target_pathname, LOOKUP_FOLLOW, &path);
 +	if (info.err) {
@@ -4090,6 +4284,7 @@ index 000000000..ef7f8c27e
 +		info.err = -EFAULT;
 +		goto out_copy_to_user;
 +	}
++	info.target_pathname[sizeof(info.target_pathname) - 1] = '\0';
 +
 +	if (*info.target_pathname == '\0') {
 +		SUSFS_LOGE("target_pathname cannot be empty\n");
@@ -4102,8 +4297,8 @@ index 000000000..ef7f8c27e
 +		info.err = -ENOMEM;
 +		goto out_copy_to_user;
 +	}
-+	strscpy(new_list->info.target_pathname, info.target_pathname, SUSFS_MAX_LEN_PATHNAME - 1);
-+	strscpy(new_list->target_pathname, info.target_pathname, SUSFS_MAX_LEN_PATHNAME - 1);
++	strscpy(new_list->info.target_pathname, info.target_pathname, SUSFS_MAX_LEN_PATHNAME);
++	strscpy(new_list->target_pathname, info.target_pathname, SUSFS_MAX_LEN_PATHNAME);
 +	INIT_LIST_HEAD(&new_list->list);
 +	mutex_lock(&susfs_mutex_lock_sus_path);
 +	list_add_tail_rcu(&new_list->list, &LH_SUS_PATH_LOOP);
@@ -4287,7 +4482,7 @@ index 000000000..ef7f8c27e
 +			err = -ENOENT;
 +			goto out_path_put_path;
 +		}
-+		if (is_update)
++		if (is_update && !(new_entry->info.flags & KSTAT_SPOOF_SIZE))
 +			new_entry->info.spoofed_size = d_backing_inode(path.dentry)->i_size;
 +
 +		new_entry->is_fuse = true;
@@ -4310,7 +4505,7 @@ index 000000000..ef7f8c27e
 +		goto out_path_put_path;
 +	}
 +
-+	if (is_update)
++	if (is_update && !(new_entry->info.flags & KSTAT_SPOOF_SIZE))
 +		new_entry->info.spoofed_size = d_backing_inode(path.dentry)->i_size;
 +
 +	new_entry->is_fuse = false;
@@ -4338,13 +4533,15 @@ index 000000000..ef7f8c27e
 +
 +void susfs_add_sus_kstat(void __user **user_info) {
 +	struct st_susfs_sus_kstat info = {0};
-+	struct st_susfs_sus_kstat_hlist *new_entry, *tmp_entry;
++	struct st_susfs_sus_kstat_hlist *new_entry, *tmp_entry, *dup_entry = NULL;
 +	struct hlist_node *tmp_hlist_node;
++	int bkt;
 +
 +	if (copy_from_user(&info, (struct st_susfs_sus_kstat __user*)*user_info, sizeof(info))) {
 +		info.err = -EFAULT;
 +		goto out_copy_to_user;
 +	}
++	info.target_pathname[sizeof(info.target_pathname) - 1] = '\0';
 +
 +	if (*info.target_pathname == '\0') {
 +		info.err = -EINVAL;
@@ -4368,51 +4565,19 @@ index 000000000..ef7f8c27e
 +
 +	// statically or not, check for duplicated entry, and remove it first if so
 +	mutex_lock(&susfs_mutex_lock_sus_kstat);
-+	hash_for_each_possible_safe(SUS_KSTAT_HLIST, tmp_entry, tmp_hlist_node, node, info.target_ino) {
-+		if (!strcmp(tmp_entry->info.target_pathname, info.target_pathname)) {
-+			info.err = susfs_mark_inode_sus_kstat(new_entry->info.target_pathname, new_entry, false);
-+			if (info.err) {
-+				mutex_unlock(&susfs_mutex_lock_sus_kstat);
-+				kfree(new_entry);
-+				goto out_copy_to_user;
-+			}
-+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
-+			SUSFS_LOGI("is_fuse: %d, is_statically: '%d', target_ino: '%lu', target_dev: '%lu', target_pathname: '%s', spoofed_ino: '%lu', spoofed_dev: '%lu', spoofed_nlink: '%u', spoofed_size: '%llu', spoofed_atime_tv_sec: '%ld', spoofed_mtime_tv_sec: '%ld', spoofed_ctime_tv_sec: '%ld', spoofed_atime_tv_nsec: '%ld', spoofed_mtime_tv_nsec: '%ld', spoofed_ctime_tv_nsec: '%ld', spoofed_blksize: '%lu', spoofed_blocks: '%llu', spoofed_mnt_id: '%d', is successfully added to SUS_KSTAT_HLIST\n",
-+					new_entry->is_fuse,
-+					new_entry->info.is_statically, new_entry->info.target_ino,
-+					new_entry->target_dev, new_entry->info.target_pathname,
-+					new_entry->info.spoofed_ino, new_entry->info.spoofed_dev,
-+					new_entry->info.spoofed_nlink, new_entry->info.spoofed_size,
-+					new_entry->info.spoofed_atime_tv_sec, new_entry->info.spoofed_mtime_tv_sec, new_entry->info.spoofed_ctime_tv_sec,
-+					new_entry->info.spoofed_atime_tv_nsec, new_entry->info.spoofed_mtime_tv_nsec, new_entry->info.spoofed_ctime_tv_nsec,
-+					new_entry->info.spoofed_blksize, new_entry->info.spoofed_blocks, new_entry->spoofed_mnt_id);
-+#else
-+			SUSFS_LOGI("is_fuse: %d, is_statically: '%d', target_ino: '%lu', target_dev: '%lu', target_pathname: '%s', spoofed_ino: '%lu', spoofed_dev: '%lu', spoofed_nlink: '%u', spoofed_size: '%u', spoofed_atime_tv_sec: '%ld', spoofed_mtime_tv_sec: '%ld', spoofed_ctime_tv_sec: '%ld', spoofed_atime_tv_nsec: '%ld', spoofed_mtime_tv_nsec: '%ld', spoofed_ctime_tv_nsec: '%ld', spoofed_blksize: '%lu', spoofed_blocks: '%llu', spoofed_mnt_id: '%d', is successfully added to SUS_KSTAT_HLIST\n",
-+					new_entry->is_fuse,
-+					new_entry->info.is_statically, new_entry->info.target_ino,
-+					new_entry->target_dev, new_entry->info.target_pathname,
-+					new_entry->info.spoofed_ino, new_entry->info.spoofed_dev,
-+					new_entry->info.spoofed_nlink, new_entry->info.spoofed_size,
-+					new_entry->info.spoofed_atime_tv_sec, new_entry->info.spoofed_mtime_tv_sec, new_entry->info.spoofed_ctime_tv_sec,
-+					new_entry->info.spoofed_atime_tv_nsec, new_entry->info.spoofed_mtime_tv_nsec, new_entry->info.spoofed_ctime_tv_nsec,
-+					new_entry->info.spoofed_blksize, new_entry->info.spoofed_blocks, new_entry->spoofed_mnt_id);
-+#endif
-+			hash_del_rcu(&tmp_entry->node);
-+			hash_add_rcu(SUS_KSTAT_HLIST, &new_entry->node, new_entry->target_ino);
-+			mutex_unlock(&susfs_mutex_lock_sus_kstat);
-+			synchronize_rcu();
-+			kfree(tmp_entry);
-+			info.err = 0;
-+			goto out_copy_to_user;
-+		}
-+	}
-+
-+	// if no duplicated, add it to list
 +	info.err = susfs_mark_inode_sus_kstat(new_entry->info.target_pathname, new_entry, false);
 +	if (info.err) {
 +		mutex_unlock(&susfs_mutex_lock_sus_kstat);
 +		kfree(new_entry);
 +		goto out_copy_to_user;
++	}
++
++	hash_for_each_safe(SUS_KSTAT_HLIST, bkt, tmp_hlist_node, tmp_entry, node) {
++		if (!strcmp(tmp_entry->info.target_pathname, info.target_pathname)) {
++			hash_del_rcu(&tmp_entry->node);
++			dup_entry = tmp_entry;
++			break;
++		}
 +	}
 +
 +#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
@@ -4426,7 +4591,7 @@ index 000000000..ef7f8c27e
 +			new_entry->info.spoofed_atime_tv_nsec, new_entry->info.spoofed_mtime_tv_nsec, new_entry->info.spoofed_ctime_tv_nsec,
 +			new_entry->info.spoofed_blksize, new_entry->info.spoofed_blocks, new_entry->spoofed_mnt_id);
 +#else
-+	SUSFS_LOGI("is_fuse: %d, is_statically: '%d', target_ino: '%lu', target_dev: '%lu', target_pathname: '%s', spoofed_ino: '%lu', spoofed_dev: '%lu', spoofed_nlink: '%u', spoofed_size: '%u', spoofed_atime_tv_sec: '%ld', spoofed_mtime_tv_sec: '%ld', spoofed_ctime_tv_sec: '%ld', spoofed_atime_tv_nsec: '%ld', spoofed_mtime_tv_nsec: '%ld', spoofed_ctime_tv_nsec: '%ld', spoofed_blksize: '%lu', spoofed_blocks: '%llu', spoofed_mnt_id: '%d', is successfully added to SUS_KSTAT_HLIST\n",
++	SUSFS_LOGI("is_fuse: %d, is_statically: '%d', target_ino: '%lu', target_dev: '%lu', target_pathname: '%s', spoofed_ino: '%lu', spoofed_dev: '%lu', spoofed_nlink: '%u', spoofed_size: '%lld', spoofed_atime_tv_sec: '%ld', spoofed_mtime_tv_sec: '%ld', spoofed_ctime_tv_sec: '%ld', spoofed_atime_tv_nsec: '%ld', spoofed_mtime_tv_nsec: '%ld', spoofed_ctime_tv_nsec: '%ld', spoofed_blksize: '%lu', spoofed_blocks: '%lld', spoofed_mnt_id: '%d', is successfully added to SUS_KSTAT_HLIST\n",
 +			new_entry->is_fuse,
 +			new_entry->info.is_statically, new_entry->info.target_ino,
 +			new_entry->target_dev, new_entry->info.target_pathname,
@@ -4438,6 +4603,10 @@ index 000000000..ef7f8c27e
 +#endif
 +	hash_add_rcu(SUS_KSTAT_HLIST, &new_entry->node, new_entry->target_ino);
 +	mutex_unlock(&susfs_mutex_lock_sus_kstat);
++	if (dup_entry) {
++		synchronize_rcu();
++		kfree(dup_entry);
++	}
 +	info.err = 0;
 +out_copy_to_user:
 +	if (copy_to_user(&((struct st_susfs_sus_kstat __user*)*user_info)->err, &info.err, sizeof(info.err))) {
@@ -4458,6 +4627,12 @@ index 000000000..ef7f8c27e
 +
 +	if (copy_from_user(&info, (struct st_susfs_sus_kstat __user*)*user_info, sizeof(info))) {
 +		info.err = -EFAULT;
++		goto out_copy_to_user;
++	}
++	info.target_pathname[sizeof(info.target_pathname) - 1] = '\0';
++
++	if (*info.target_pathname == '\0') {
++		info.err = -EINVAL;
 +		goto out_copy_to_user;
 +	}
 +
@@ -4722,6 +4897,8 @@ index 000000000..ef7f8c27e
 +		info.err = -EFAULT;
 +		goto out_copy_to_user;
 +	}
++	info.release[sizeof(info.release) - 1] = '\0';
++	info.version[sizeof(info.version) - 1] = '\0';
 +
 +	if (*info.release == '\0' || *info.version == '\0') {
 +		info.err = -EFAULT;
@@ -4730,14 +4907,14 @@ index 000000000..ef7f8c27e
 +
 +	write_seqlock(&susfs_uname_seqlock);
 +	if (!strcmp(info.release, "default")) {
-+		strscpy(my_uname.release, utsname()->release, __NEW_UTS_LEN);
++		strscpy(my_uname.release, utsname()->release, sizeof(my_uname.release));
 +	} else {
-+		strscpy(my_uname.release, info.release, __NEW_UTS_LEN);
++		strscpy(my_uname.release, info.release, sizeof(my_uname.release));
 +	}
 +	if (!strcmp(info.version, "default")) {
-+		strscpy(my_uname.version, utsname()->version, __NEW_UTS_LEN);
++		strscpy(my_uname.version, utsname()->version, sizeof(my_uname.version));
 +	} else {
-+		strscpy(my_uname.version, info.version, __NEW_UTS_LEN);
++		strscpy(my_uname.version, info.version, sizeof(my_uname.version));
 +	}
 +	write_sequnlock(&susfs_uname_seqlock);
 +
@@ -4760,8 +4937,8 @@ index 000000000..ef7f8c27e
 +
 +	do {
 +		seq = read_seqbegin(&susfs_uname_seqlock);
-+		strscpy(tmp->release, my_uname.release, __NEW_UTS_LEN);
-+		strscpy(tmp->version, my_uname.version, __NEW_UTS_LEN);
++		strscpy(tmp->release, my_uname.release, sizeof(tmp->release));
++		strscpy(tmp->version, my_uname.version, sizeof(tmp->version));
 +	} while (read_seqretry(&susfs_uname_seqlock, seq));
 +}
 +#endif // #ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
@@ -4798,6 +4975,7 @@ index 000000000..ef7f8c27e
 +static char *fake_cmdline_or_bootconfig = NULL;
 +DEFINE_STATIC_KEY_FALSE(susfs_is_fake_cmdline_or_bootconfig_buffer_set);
 +static DEFINE_SEQLOCK(susfs_fake_cmdline_or_bootconfig_seqlock);
++static DEFINE_MUTEX(susfs_mutex_lock_cmdline_or_bootconfig);
 +
 +void susfs_set_cmdline_or_bootconfig(void __user **user_info) {
 +	struct st_susfs_spoof_cmdline_or_bootconfig *info = (struct st_susfs_spoof_cmdline_or_bootconfig *)kzalloc(sizeof(struct st_susfs_spoof_cmdline_or_bootconfig), GFP_KERNEL);
@@ -4815,15 +4993,18 @@ index 000000000..ef7f8c27e
 +		info->err = -EFAULT;
 +		goto out_copy_to_user;
 +	}
++	info->fake_cmdline_or_bootconfig[sizeof(info->fake_cmdline_or_bootconfig) - 1] = '\0';
 +
 +	if (*info->fake_cmdline_or_bootconfig == '\0') {
 +		info->err = -EINVAL;
 +		goto out_copy_to_user;
 +	}
 +
++	mutex_lock(&susfs_mutex_lock_cmdline_or_bootconfig);
 +	if (!fake_cmdline_or_bootconfig) {
 +		fake_cmdline_or_bootconfig = (char *)kzalloc(SUSFS_FAKE_CMDLINE_OR_BOOTCONFIG_SIZE, GFP_KERNEL);
 +		if (!fake_cmdline_or_bootconfig) {
++			mutex_unlock(&susfs_mutex_lock_cmdline_or_bootconfig);
 +			info->err = -ENOMEM;
 +			goto out_copy_to_user;
 +		}
@@ -4832,11 +5013,12 @@ index 000000000..ef7f8c27e
 +	write_seqlock(&susfs_fake_cmdline_or_bootconfig_seqlock);
 +	strscpy(fake_cmdline_or_bootconfig,
 +			info->fake_cmdline_or_bootconfig,
-+			SUSFS_FAKE_CMDLINE_OR_BOOTCONFIG_SIZE - 1);
++			SUSFS_FAKE_CMDLINE_OR_BOOTCONFIG_SIZE);
 +	write_sequnlock(&susfs_fake_cmdline_or_bootconfig_seqlock);
 +
 +	if (!static_key_enabled(&susfs_is_fake_cmdline_or_bootconfig_buffer_set))
 +		static_branch_enable(&susfs_is_fake_cmdline_or_bootconfig_buffer_set);
++	mutex_unlock(&susfs_mutex_lock_cmdline_or_bootconfig);
 +	SUSFS_LOGI("fake_cmdline_or_bootconfig is set\n");
 +
 +	info->err = 0;
@@ -4861,7 +5043,10 @@ index 000000000..ef7f8c27e
 +	}
 +	do {
 +		seq = read_seqbegin(&susfs_fake_cmdline_or_bootconfig_seqlock);
-+		strscpy(buf, fake_cmdline_or_bootconfig, SUSFS_FAKE_CMDLINE_OR_BOOTCONFIG_SIZE);
++		if (fake_cmdline_or_bootconfig)
++			strscpy(buf, fake_cmdline_or_bootconfig, SUSFS_FAKE_CMDLINE_OR_BOOTCONFIG_SIZE);
++		else
++			buf[0] = '\0';
 +	} while (read_seqretry(&susfs_fake_cmdline_or_bootconfig_seqlock, seq));
 +	seq_puts(m, buf);
 +	kfree(buf);
@@ -4887,12 +5072,14 @@ index 000000000..ef7f8c27e
 +		info.err = -EFAULT;
 +		goto out_copy_to_user;
 +	}
++	info.target_pathname[sizeof(info.target_pathname) - 1] = '\0';
++	info.redirected_pathname[sizeof(info.redirected_pathname) - 1] = '\0';
 +
-+        if (*info.target_pathname == '\0') {
-+                info.err = -EINVAL;
-+		SUSFS_LOGE("empty target_pathname\n");
-+                goto out_copy_to_user;
-+        }
++	if (*info.target_pathname == '\0' || *info.redirected_pathname == '\0') {
++		info.err = -EINVAL;
++		SUSFS_LOGE("empty target_pathname or redirected_pathname\n");
++		goto out_copy_to_user;
++	}
 +
 +	if (info.uid_scheme < UID_NON_APP_PROC || info.uid_scheme > UID_UMOUNTED_PROC) {
 +		info.err = -EINVAL;
@@ -4964,8 +5151,8 @@ index 000000000..ef7f8c27e
 +	new_entry_redirected->reversed_lookup_only = true;
 +	new_entry_redirected->spoofed_mnt_id = new_entry_target->spoofed_mnt_id;
 +	memcpy(&new_entry_redirected->spoofed_kstatfs, &new_entry_target->spoofed_kstatfs, sizeof(struct kstatfs));
-+	strscpy(new_entry_redirected->info.target_pathname, info.redirected_pathname, SUSFS_MAX_LEN_PATHNAME - 1);
-+	strscpy(new_entry_redirected->info.redirected_pathname, info.target_pathname, SUSFS_MAX_LEN_PATHNAME - 1);
++	strscpy(new_entry_redirected->info.target_pathname, info.redirected_pathname, SUSFS_MAX_LEN_PATHNAME);
++	strscpy(new_entry_redirected->info.redirected_pathname, info.target_pathname, SUSFS_MAX_LEN_PATHNAME);
 +
 +	// check for existing entries, delete it first if so
 +	mutex_lock(&susfs_mutex_lock_open_redirect);
@@ -4986,8 +5173,9 @@ index 000000000..ef7f8c27e
 +	}
 +
 +	if (is_first_dup_found) {
-+		hash_for_each_possible_safe(OPEN_REDIRECT_HLIST, tmp_entry_redirected, tmp_hlist_node, node, redirected_inode->i_ino) {
-+			if (!strcmp(tmp_entry_redirected->info.target_pathname, info.redirected_pathname)) {
++		hash_for_each_possible_safe(OPEN_REDIRECT_HLIST, tmp_entry_redirected, tmp_hlist_node, node, tmp_entry_target->redirected_ino) {
++			if (tmp_entry_redirected->reversed_lookup_only &&
++			    !strcmp(tmp_entry_redirected->info.target_pathname, tmp_entry_target->info.redirected_pathname)) {
 +				is_second_dup_found = true;
 +				hash_del_rcu(&tmp_entry_redirected->node);
 +				break;
@@ -5082,27 +5270,30 @@ index 000000000..ef7f8c27e
 +
 +int susfs_open_redirect_spoof_vfs_readlink(struct inode *inode, char __user *buffer, int buflen) {
 +	struct st_susfs_open_redirect_hlist *entry = NULL;
-+	int srcu_idx = srcu_read_lock(&susfs_srcu_open_redirect);
++	int srcu_idx;
 +
++	if (buflen <= 0)
++		return -EINVAL;
++
++	srcu_idx = srcu_read_lock(&susfs_srcu_open_redirect);
 +	hash_for_each_possible_rcu(OPEN_REDIRECT_HLIST, entry, node, inode->i_ino) {
 +		if (entry->reversed_lookup_only &&
 +			entry->target_ino == inode->i_ino &&
 +			entry->target_dev == inode->i_sb->s_dev)
 +		{
++			int len = strlen(entry->info.redirected_pathname);
++
 +			SUSFS_LOGI("spoof path '%s' to '%s'\n",
 +					entry->info.target_pathname, entry->info.redirected_pathname);
-+			if (strlen(entry->info.redirected_pathname) >= buflen) {
-+				SUSFS_LOGE("buflen not big enough\n");
-+				srcu_read_unlock(&susfs_srcu_open_redirect, srcu_idx);
-+				return -ENAMETOOLONG;
-+			}
-+			if (copy_to_user(buffer, entry->info.redirected_pathname, strlen(entry->info.redirected_pathname))) {
++			if (len > buflen)
++				len = buflen;
++			if (copy_to_user(buffer, entry->info.redirected_pathname, len)) {
 +				SUSFS_LOGE("copy_to_user() failed\n");
 +				srcu_read_unlock(&susfs_srcu_open_redirect, srcu_idx);
 +				return -EFAULT;
 +			}
 +			srcu_read_unlock(&susfs_srcu_open_redirect, srcu_idx);
-+			return 0;
++			return len;
 +		}
 +	}
 +	srcu_read_unlock(&susfs_srcu_open_redirect, srcu_idx);
@@ -5120,12 +5311,7 @@ index 000000000..ef7f8c27e
 +		{
 +			SUSFS_LOGI("spoof path '%s' to '%s'\n",
 +					entry->info.target_pathname, entry->info.redirected_pathname);
-+			if (strlen(entry->info.redirected_pathname) >= buflen) {
-+				SUSFS_LOGE("buflen not big enough\n");
-+				srcu_read_unlock(&susfs_srcu_open_redirect, srcu_idx);
-+				return -ENAMETOOLONG;
-+			}
-+			strscpy(tmp_buf, entry->info.redirected_pathname, SUSFS_MAX_LEN_PATHNAME - 1);
++			strscpy(tmp_buf, entry->info.redirected_pathname, SUSFS_MAX_LEN_PATHNAME);
 +			srcu_read_unlock(&susfs_srcu_open_redirect, srcu_idx);
 +			return 0;
 +		}
@@ -5171,6 +5357,7 @@ index 000000000..ef7f8c27e
 +		info.err = -EFAULT;
 +		goto out_copy_to_user;
 +	}
++	info.target_pathname[sizeof(info.target_pathname) - 1] = '\0';
 +
 +	info.err = kern_path(info.target_pathname, LOOKUP_FOLLOW, &path);
 +	if (info.err) {
@@ -5666,6 +5853,7 @@ index 000000000..ef7f8c27e
 +		return -EINVAL;
 +	}
 +	memcpy(buf_ptr, config_string, tmp_size);
++	buf_ptr[tmp_size] = '\0';
 +	return 0;
 +}
 +
@@ -5681,11 +5869,6 @@ index 000000000..ef7f8c27e
 +			err = -EFAULT;
 +		SUSFS_LOGI("CMD_SUSFS_SHOW_ENABLED_FEATURES -> ret: %d\n", err);
 +		return;
-+	}
-+
-+	if (copy_from_user(info, (struct st_susfs_enabled_features __user*)*user_info, sizeof(struct st_susfs_enabled_features))) {
-+		info->err = -EFAULT;
-+		goto out_copy_to_user;
 +	}
 +
 +	buf_ptr = info->enabled_features;
@@ -5815,6 +5998,7 @@ index 000000000..ef7f8c27e
 +static void susfs_sdcard_cleanup_fn(struct work_struct *work)
 +{
 +	struct fsnotify_group *grp;
++	struct fsnotify_mark *mark;
 +	struct inode *inode;
 +
 +	if (static_key_enabled(&susfs_is_sdcard_android_data_not_decrypted))
@@ -5825,6 +6009,10 @@ index 000000000..ef7f8c27e
 +	grp = xchg(&g, NULL);
 +	if (grp)
 +		fsnotify_destroy_group(grp);
++
++	mark = xchg(&g_watch.mark, NULL);
++	if (mark)
++		fsnotify_put_mark(mark);
 +
 +	inode = xchg(&g_watch.inode, NULL);
 +	if (inode)
@@ -5894,12 +6082,18 @@ index 000000000..ef7f8c27e
 +	return 0;
 +}
 +
++static void susfs_free_mark(struct fsnotify_mark *m)
++{
++	kfree(m);
++}
++
 +static const struct fsnotify_ops fsnotify_ops = {
 +#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0)
 +	.handle_inode_event = susfs_handle_sdcard_inode_event,
 +#else
 +	.handle_event = susfs_handle_sdcard_inode_event,
 +#endif
++	.free_mark = susfs_free_mark,
 +};
 +
 +static int add_mark_on_inode(struct inode *inode, u32 mask,
@@ -6582,27 +6776,36 @@ index 64765f5b1..a070d02b7 100644
  	if (!ns_capable(pid_ns->user_ns, CAP_SYS_BOOT))
  		return -EPERM;
 diff --git a/kernel/seccomp.c b/kernel/seccomp.c
-index b2e198166..e99ee4eb5 100644
+index b2e198166..f7f2a81e1 100644
 --- a/kernel/seccomp.c
 +++ b/kernel/seccomp.c
-@@ -27,6 +27,9 @@
+@@ -27,6 +27,13 @@
  #include <linux/slab.h>
  #include <linux/syscalls.h>
  #include <linux/sysctl.h>
 +#ifdef CONFIG_KSU
 +#include <asm/unistd.h>
++extern bool allowed_for_su(void);
++#ifndef __NR_compat_reboot
++#define __NR_compat_reboot 88
++#endif
 +#endif
  
  /* Not exposed in headers: strictly internal use only. */
  #define SECCOMP_MODE_DEAD	(SECCOMP_MODE_FILTER + 1)
-@@ -943,6 +946,14 @@ int __secure_computing(const struct seccomp_data *sd)
+@@ -943,6 +950,19 @@ int __secure_computing(const struct seccomp_data *sd)
  	this_syscall = sd ? sd->nr :
  		syscall_get_nr(current, task_pt_regs(current));
  
 +#ifdef CONFIG_KSU
++#ifdef CONFIG_COMPAT
++	if (unlikely(this_syscall == (is_compat_task() ? __NR_compat_reboot : __NR_reboot))) {
++#else
 +	if (unlikely(this_syscall == __NR_reboot)) {
++#endif
 +		u64 magic1 = sd ? sd->args[0] : task_pt_regs(current)->regs[0];
-+		if ((int)magic1 == (int)0xDEADBEEF)
++		if ((int)magic1 == (int)0xDEADBEEF &&
++		    (current_uid().val == 0 || allowed_for_su()))
 +			return 0;
 +	}
 +#endif
@@ -6797,7 +7000,7 @@ index 884a014ce..423cc94c2 100644
  	sad.requested = requested;
  	sad.ssid = ssid;
 diff --git a/security/selinux/ss/status.c b/security/selinux/ss/status.c
-index 3c554a442..ddff03585 100644
+index 3c554a442..e503494e3 100644
 --- a/security/selinux/ss/status.c
 +++ b/security/selinux/ss/status.c
 @@ -13,6 +13,10 @@
@@ -6827,14 +7030,13 @@ index 3c554a442..ddff03585 100644
  		status->sequence++;
  		smp_wmb();
  
-@@ -111,6 +124,16 @@ void selinux_status_update_policyload(struct selinux_state *state,
+@@ -111,6 +124,15 @@ void selinux_status_update_policyload(struct selinux_state *state,
  	if (state->ss->status_page) {
  		status = page_address(state->ss->status_page);
  
 +#ifdef CONFIG_KSU_SUSFS
-+		if (susfs_is_current_ksu_domain()) {
++		if (seqno == 0 || susfs_is_current_ksu_domain()) {
 +			smp_wmb();
-+			status->policyload = seqno;
 +			status->deny_unknown = !security_get_allow_unknown(state);
 +			smp_wmb();
 +			mutex_unlock(&state->ss->status_lock);
